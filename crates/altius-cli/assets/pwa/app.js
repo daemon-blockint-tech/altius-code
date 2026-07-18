@@ -69,7 +69,7 @@
   function renderRuns(runs) {
     els.runs.innerHTML = "";
     if (!runs.length) {
-      els.runs.innerHTML = `<li class="empty">No runs yet</li>`;
+      els.runs.innerHTML = `<li style="cursor:default;color:var(--muted)">No runs yet</li>`;
       return;
     }
     for (const run of runs) {
@@ -77,10 +77,10 @@
       const li = document.createElement("li");
       if (run.run_id === selectedId) li.classList.add("active");
       const preview = flattenParts(run.input).slice(0, 80) || "(empty)";
-      li.innerHTML = `<div class="row-title"><span class="status ${run.status}">${run.status}</span>
-        <span class="agent">${escapeHtml(run.agent_name)}</span></div>
-        <div class="preview">${escapeHtml(preview)}</div>
-        <div class="rid">${run.run_id}</div>`;
+      li.innerHTML = `<div><span class="status ${run.status}">${run.status}</span>
+        <strong style="margin-left:0.4rem">${run.agent_name}</strong></div>
+        <div style="color:var(--muted);font-size:0.85rem;margin-top:0.25rem">${escapeHtml(preview)}</div>
+        <div style="color:var(--muted);font-size:0.75rem;margin-top:0.25rem">${run.run_id}</div>`;
       li.addEventListener("click", () => selectRun(run.run_id));
       els.runs.appendChild(li);
     }
