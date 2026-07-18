@@ -13,6 +13,10 @@ pub enum TxKind {
     SetAuthority,
     CloseAccount,
     Transfer { lamports: u64 },
+    /// An x402 / machine-payment settlement leaving the wallet. Kept
+    /// separate from `Transfer` so policy can gate paid API calls
+    /// independently of plain fund movement (Phase C, altius-payments).
+    Payment { lamports: u64 },
     Invoke { instruction_name: String },
 }
 
@@ -24,7 +28,11 @@ impl TxKind {
     pub fn is_irreversible(&self) -> bool {
         matches!(
             self,
-            TxKind::Upgrade | TxKind::SetAuthority | TxKind::CloseAccount | TxKind::Transfer { .. }
+            TxKind::Upgrade
+                | TxKind::SetAuthority
+                | TxKind::CloseAccount
+                | TxKind::Transfer { .. }
+                | TxKind::Payment { .. }
         )
     }
 
@@ -37,6 +45,7 @@ impl TxKind {
             TxKind::SetAuthority => "SetAuthority".to_string(),
             TxKind::CloseAccount => "CloseAccount".to_string(),
             TxKind::Transfer { .. } => "Transfer".to_string(),
+            TxKind::Payment { .. } => "Payment".to_string(),
             TxKind::Invoke { instruction_name } => instruction_name.clone(),
         }
     }
@@ -101,5 +110,11 @@ mod tests {
         assert!(TxKind::SetAuthority.is_irreversible());
         assert!(TxKind::CloseAccount.is_irreversible());
         assert!(TxKind::Transfer { lamports: 1 }.is_irreversible());
+        assert!(TxKind::Payment { lamports: 1 }.is_irreversible());
+    }
+
+    #[test]
+    fn payment_has_a_stable_policy_name() {
+        assert_eq!(TxKind::Payment { lamports: 5 }.name(), "Payment");
     }
 }
