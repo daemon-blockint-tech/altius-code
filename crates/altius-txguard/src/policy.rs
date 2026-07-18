@@ -41,6 +41,7 @@ impl Default for PolicyConfig {
                 "SetAuthority".to_string(),
                 "Upgrade".to_string(),
                 "CloseAccount".to_string(),
+                "Payment".to_string(),
             ],
         }
     }
@@ -88,17 +89,20 @@ impl PolicyConfig {
             };
         }
 
-        if self.deny_instructions.iter().any(|d| *d == tx.kind.name()) {
-            return PolicyDecision::RequireApproval;
-        }
-
-        if let TxKind::Transfer { lamports } = tx.kind {
+        // The hard outflow cap is checked before `deny_instructions` so an
+        // oversized transfer/payment is rejected outright rather than merely
+        // escalated to manual approval.
+        if let TxKind::Transfer { lamports } | TxKind::Payment { lamports } = tx.kind {
             if lamports > self.max_lamports_out {
                 return PolicyDecision::Reject(format!(
-                    "transfer of {lamports} lamports exceeds max_lamports_out {}",
+                    "outflow of {lamports} lamports exceeds max_lamports_out {}",
                     self.max_lamports_out
                 ));
             }
+        }
+
+        if self.deny_instructions.iter().any(|d| *d == tx.kind.name()) {
+            return PolicyDecision::RequireApproval;
         }
 
         PolicyDecision::Continue
@@ -172,6 +176,26 @@ mod tests {
             ..PolicyConfig::default()
         };
         let request = tx(Cluster::Devnet, TxKind::Transfer { lamports: 101 });
+        assert!(matches!(
+            policy.evaluate(&request),
+            PolicyDecision::Reject(_)
+        ));
+    }
+
+    #[test]
+    fn payment_requires_approval_by_default_even_on_devnet() {
+        let policy = PolicyConfig::default();
+        let request = tx(Cluster::Devnet, TxKind::Payment { lamports: 10 });
+        assert_eq!(policy.evaluate(&request), PolicyDecision::RequireApproval);
+    }
+
+    #[test]
+    fn oversized_payment_is_rejected_outright() {
+        let policy = PolicyConfig {
+            max_lamports_out: 100,
+            ..PolicyConfig::default()
+        };
+        let request = tx(Cluster::Devnet, TxKind::Payment { lamports: 101 });
         assert!(matches!(
             policy.evaluate(&request),
             PolicyDecision::Reject(_)

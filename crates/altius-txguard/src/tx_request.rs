@@ -12,12 +12,18 @@ pub enum TxKind {
     Upgrade,
     SetAuthority,
     CloseAccount,
-    Transfer { lamports: u64 },
+    Transfer {
+        lamports: u64,
+    },
     /// An x402 / machine-payment settlement leaving the wallet. Kept
     /// separate from `Transfer` so policy can gate paid API calls
     /// independently of plain fund movement (Phase C, altius-payments).
-    Payment { lamports: u64 },
-    Invoke { instruction_name: String },
+    Payment {
+        lamports: u64,
+    },
+    Invoke {
+        instruction_name: String,
+    },
 }
 
 impl TxKind {

@@ -14,6 +14,10 @@ altius-graph = { path = "crates/altius-graph" }
 altius-agents = { path = "crates/altius-agents" }
 altius-mcp = { path = "crates/altius-mcp" }
 altius-protocol = { path = "crates/altius-protocol" }
+altius-payments = { path = "crates/altius-payments" }
+altius-memory = { path = "crates/altius-memory" }
+altius-ontology = { path = "crates/altius-ontology" }
+altius-wasm-agents = { path = "crates/altius-wasm-agents" }
 altius-svm-detect = { path = "crates/altius-svm-detect" }
 altius-svm-tools = { path = "crates/altius-svm-tools" }
 altius-txguard = { path = "crates/altius-txguard" }
