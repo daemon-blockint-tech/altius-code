@@ -1,0 +1,15 @@
+[package]
+name = "altius-svm-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+altius-svm-detect = { workspace = true }
+altius-txguard = { workspace = true }
+thiserror = { workspace = true }
+regex = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
