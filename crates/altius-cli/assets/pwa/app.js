@@ -1,13 +1,14 @@
 /* Altius Fleet PWA thin client — vanilla JS, zero build. */
 (() => {
+  const THEME_KEY = "altius-fleet-theme";
+  const THEME_CYCLE = ["system", "light", "dark"];
+
   const apiBase = (() => {
-    // Same-origin when served from /app/; allow override via query.
     const params = new URLSearchParams(location.search);
     return (params.get("api") || location.origin).replace(/\/$/, "");
   })();
 
   const els = {
-    agent: document.getElementById("agent"),
     prompt: document.getElementById("prompt"),
     send: document.getElementById("send"),
     refresh: document.getElementById("refresh"),
@@ -21,11 +22,25 @@
     approvalMsg: document.getElementById("approval-msg"),
     approve: document.getElementById("approve"),
     cancel: document.getElementById("cancel"),
+    agentPills: document.getElementById("agent-pills"),
+    themeToggle: document.getElementById("theme-toggle"),
+    themeIcon: document.getElementById("theme-icon"),
+    navDispatch: document.getElementById("nav-dispatch"),
+    navRuns: document.getElementById("nav-runs"),
   };
 
   let selectedId = null;
   let pollTimer = null;
+  let selectedAgent = "browser";
   const known = new Map();
+
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
+  }
 
   function showError(message) {
     if (!message) {
@@ -66,32 +81,93 @@
       .join("\n");
   }
 
+  function badgeClass(status) {
+    const knownStatus = [
+      "created",
+      "in-progress",
+      "awaiting",
+      "completed",
+      "failed",
+      "cancelled",
+    ];
+    return knownStatus.includes(status) ? `badge ${status}` : "badge";
+  }
+
+  function setAgent(agent) {
+    selectedAgent = agent;
+    for (const btn of els.agentPills.querySelectorAll("[data-agent]")) {
+      const pressed = btn.dataset.agent === agent;
+      btn.setAttribute("aria-pressed", pressed ? "true" : "false");
+    }
+  }
+
+  function setView(view) {
+    document.body.dataset.mobileView = view;
+    for (const btn of [els.navDispatch, els.navRuns]) {
+      const active = btn.dataset.view === view;
+      btn.classList.toggle("active", active);
+      if (active) btn.setAttribute("aria-current", "page");
+      else btn.removeAttribute("aria-current");
+    }
+  }
+
+  function readStoredTheme() {
+    const stored = localStorage.getItem(THEME_KEY);
+    return THEME_CYCLE.includes(stored) ? stored : "system";
+  }
+
+  function applyTheme(mode) {
+    const root = document.documentElement;
+    if (mode === "system") root.removeAttribute("data-theme");
+    else root.dataset.theme = mode;
+
+    const icons = { system: "◐", light: "☀", dark: "☾" };
+    els.themeIcon.textContent = icons[mode] || "◐";
+    els.themeToggle.title = `Theme: ${mode} (click to cycle)`;
+    els.themeToggle.setAttribute("aria-label", `Color theme: ${mode}. Click to cycle.`);
+  }
+
+  function initTheme() {
+    applyTheme(readStoredTheme());
+  }
+
+  function cycleTheme() {
+    const current = readStoredTheme();
+    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(current) + 1) % THEME_CYCLE.length];
+    localStorage.setItem(THEME_KEY, next);
+    applyTheme(next);
+  }
+
   function renderRuns(runs) {
     els.runs.innerHTML = "";
     if (!runs.length) {
-      els.runs.innerHTML = `<li style="cursor:default;color:var(--muted)">No runs yet</li>`;
+      const empty = document.createElement("li");
+      empty.className = "runs-empty";
+      empty.textContent = "No runs yet. Dispatch one above to get started.";
+      els.runs.appendChild(empty);
       return;
     }
     for (const run of runs) {
       known.set(run.run_id, run);
       const li = document.createElement("li");
-      if (run.run_id === selectedId) li.classList.add("active");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "list-row" + (run.run_id === selectedId ? " active" : "");
       const preview = flattenParts(run.input).slice(0, 80) || "(empty)";
-      li.innerHTML = `<div><span class="status ${run.status}">${run.status}</span>
-        <strong style="margin-left:0.4rem">${run.agent_name}</strong></div>
-        <div style="color:var(--muted);font-size:0.85rem;margin-top:0.25rem">${escapeHtml(preview)}</div>
-        <div style="color:var(--muted);font-size:0.75rem;margin-top:0.25rem">${run.run_id}</div>`;
-      li.addEventListener("click", () => selectRun(run.run_id));
+      btn.innerHTML = `
+        <div class="list-row-title">
+          <span class="${badgeClass(run.status)}">${escapeHtml(run.status)}</span>
+          <span>${escapeHtml(run.agent_name)}</span>
+        </div>
+        <div class="list-row-preview">${escapeHtml(preview)}</div>
+        <div class="list-row-meta">${escapeHtml(run.run_id)}</div>`;
+      btn.addEventListener("click", () => {
+        selectRun(run.run_id);
+        if (window.matchMedia("(max-width: 800px)").matches) setView("dispatch");
+      });
+      li.appendChild(btn);
       els.runs.appendChild(li);
     }
-  }
-
-  function escapeHtml(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;");
   }
 
   function renderDetail(run) {
@@ -102,24 +178,23 @@
     els.detail.hidden = false;
     els.detailId.textContent = run.run_id;
     els.detailStatus.textContent = run.status;
-    els.detailStatus.className = `status ${run.status}`;
+    els.detailStatus.className = badgeClass(run.status);
     const input = flattenParts(run.input);
     const output = flattenParts(run.output);
     const error = run.error || "";
     els.detailBody.textContent = [
-      `agent: ${run.agent_name}`,
-      `status: ${run.status}`,
+      `agent    ${run.agent_name}`,
+      `status   ${run.status}`,
       "",
-      "— input —",
+      "INPUT",
       input || "(none)",
       "",
-      "— output —",
+      "OUTPUT",
       output || "(none)",
-      error ? `\n— error —\n${error}` : "",
+      error ? `\nERROR\n${error}` : "",
     ].join("\n");
 
-    const awaiting = run.status === "awaiting";
-    els.approval.hidden = !awaiting;
+    els.approval.hidden = run.status !== "awaiting";
   }
 
   async function refreshRuns() {
@@ -153,7 +228,6 @@
       known.set(id, run);
       if (!quiet) showError("");
       renderDetail(run);
-      // Refresh list highlighting without another network round-trip when possible.
       const runs = [...known.values()].sort(
         (a, b) => new Date(b.created_at) - new Date(a.created_at)
       );
@@ -167,7 +241,7 @@
   async function sendRun() {
     const prompt = els.prompt.value.trim();
     if (!prompt) {
-      showError("Prompt is required");
+      showError("Enter a prompt before sending.");
       return;
     }
     els.send.disabled = true;
@@ -176,7 +250,7 @@
       const run = await api("/runs", {
         method: "POST",
         body: JSON.stringify({
-          agent_name: els.agent.value,
+          agent_name: selectedAgent,
           input: [{ role: "user", parts: [{ content_type: "text/plain", content: prompt }] }],
         }),
       });
@@ -185,6 +259,7 @@
       await refreshRuns();
       renderDetail(run);
       maybePoll(run);
+      setView("dispatch");
     } catch (err) {
       showError(err.message || String(err));
     } finally {
@@ -236,10 +311,26 @@
     }
   }
 
+  els.agentPills.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-agent]");
+    if (!btn) return;
+    setAgent(btn.dataset.agent);
+  });
+
+  els.navDispatch.addEventListener("click", () => setView("dispatch"));
+  els.navRuns.addEventListener("click", () => setView("runs"));
+  els.themeToggle.addEventListener("click", cycleTheme);
   els.send.addEventListener("click", sendRun);
   els.refresh.addEventListener("click", refreshRuns);
   els.approve.addEventListener("click", resumeRun);
   els.cancel.addEventListener("click", cancelRun);
+
+  els.prompt.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      sendRun();
+    }
+  });
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js").catch(() => {
@@ -247,5 +338,8 @@
     });
   }
 
+  initTheme();
+  setAgent("browser");
+  setView("dispatch");
   refreshRuns();
 })();

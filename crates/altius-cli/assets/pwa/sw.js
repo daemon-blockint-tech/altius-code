@@ -1,7 +1,13 @@
 /* Minimal service worker so the thin client is installable as a PWA.
    Network-first for API; cache-first for static assets. */
-const CACHE = "altius-fleet-pwa-v1";
-const ASSETS = ["./", "./index.html", "./app.js", "./manifest.webmanifest"];
+const CACHE = "altius-fleet-pwa-v2";
+const ASSETS = [
+  "./",
+  "./index.html",
+  "./app.js",
+  "./design-system.css",
+  "./manifest.webmanifest",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));

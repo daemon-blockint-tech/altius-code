@@ -3,166 +3,125 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0b1220" />
+    <meta name="theme-color" content="#0b101b" />
+    <meta name="color-scheme" content="light dark" />
     <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="stylesheet" href="design-system.css" />
     <title>Altius Fleet</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg: #0b1220;
-        --panel: #121a2b;
-        --border: #243047;
-        --text: #e8eefc;
-        --muted: #9aa8c7;
-        --accent: #5b9cff;
-        --ok: #3dd68c;
-        --warn: #f0b429;
-        --bad: #f07178;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font: 15px/1.45 system-ui, -apple-system, Segoe UI, sans-serif;
-        background: var(--bg);
-        color: var(--text);
-      }
-      header {
-        padding: 1rem 1.25rem;
-        border-bottom: 1px solid var(--border);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 1rem;
-      }
-      header h1 { font-size: 1.1rem; margin: 0; font-weight: 650; }
-      header .meta { color: var(--muted); font-size: 0.85rem; }
-      main {
-        display: grid;
-        grid-template-columns: 1.2fr 0.8fr;
-        gap: 1rem;
-        padding: 1rem;
-        max-width: 1100px;
-        margin: 0 auto;
-      }
-      @media (max-width: 800px) {
-        main { grid-template-columns: 1fr; }
-      }
-      section {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 1rem;
-      }
-      h2 { margin: 0 0 0.75rem; font-size: 0.95rem; color: var(--muted); font-weight: 600; }
-      label { display: block; margin: 0.5rem 0 0.25rem; color: var(--muted); font-size: 0.85rem; }
-      textarea, select, input, button {
-        font: inherit;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        background: #0e1626;
-        color: var(--text);
-      }
-      textarea, select, input {
-        width: 100%;
-        padding: 0.65rem 0.75rem;
-      }
-      textarea { min-height: 120px; resize: vertical; }
-      .row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
-      button {
-        padding: 0.55rem 0.9rem;
-        cursor: pointer;
-        background: var(--accent);
-        border-color: transparent;
-        color: #061018;
-        font-weight: 600;
-      }
-      button.secondary { background: transparent; color: var(--text); border-color: var(--border); }
-      button.danger { background: var(--bad); color: #1a0608; }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
-      .runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
-      .runs li {
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 0.65rem 0.75rem;
-        cursor: pointer;
-      }
-      .runs li.active { border-color: var(--accent); }
-      .status {
-        display: inline-block;
-        padding: 0.1rem 0.45rem;
-        border-radius: 999px;
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-        background: #1a2438;
-        color: var(--muted);
-      }
-      .status.awaiting { color: var(--warn); }
-      .status.completed { color: var(--ok); }
-      .status.failed, .status.cancelled { color: var(--bad); }
-      .status.in-progress { color: var(--accent); }
-      .card {
-        margin-top: 1rem;
-        padding: 0.85rem;
-        border-radius: 10px;
-        border: 1px solid var(--border);
-        background: #0e1626;
-      }
-      .card.warn { border-color: #6a5118; background: #1a1508; }
-      pre {
-        white-space: pre-wrap;
-        word-break: break-word;
-        margin: 0.5rem 0 0;
-        font-size: 0.85rem;
-        color: var(--muted);
-      }
-      .error { color: var(--bad); margin-top: 0.5rem; }
-    </style>
   </head>
   <body>
-    <header>
-      <h1>Altius Fleet</h1>
-      <div class="meta">localhost thin client · no auth</div>
-    </header>
-    <main>
-      <section>
-        <h2>Dispatch</h2>
-        <label for="agent">Agent</label>
-        <select id="agent">
-          <option value="browser">browser (@Browser)</option>
-          <option value="altius">altius (supervisor)</option>
-        </select>
-        <label for="prompt">Prompt</label>
-        <textarea id="prompt" placeholder="@Browser open https://example.com and summarize the title"></textarea>
-        <div class="row">
-          <button id="send">Send run</button>
-          <button id="refresh" class="secondary">Refresh runs</button>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Altius Fleet">
+        <h1 class="brand">Altius Fleet</h1>
+        <nav class="sidebar-nav" aria-label="Primary">
+          <button
+            type="button"
+            class="nav-item active"
+            id="nav-dispatch"
+            data-view="dispatch"
+            aria-current="page"
+          >
+            Dispatch
+          </button>
+          <button type="button" class="nav-item" id="nav-runs" data-view="runs">
+            Runs
+          </button>
+        </nav>
+        <div class="sidebar-footer">
+          <button
+            type="button"
+            class="btn btn-ghost btn-pill btn-icon"
+            id="theme-toggle"
+            title="Theme: system → light → dark"
+            aria-label="Cycle color theme"
+          >
+            <span id="theme-icon" aria-hidden="true">◐</span>
+          </button>
+          <p class="sidebar-meta">localhost · no auth</p>
         </div>
-        <div id="error" class="error" hidden></div>
+      </aside>
 
-        <div id="detail" class="card" hidden>
-          <div><strong id="detail-id"></strong> <span id="detail-status" class="status"></span></div>
-          <pre id="detail-body"></pre>
-          <div id="approval" class="card warn" hidden>
-            <strong>Approval required</strong>
-            <p style="margin:0.4rem 0;color:var(--muted);font-size:0.9rem;">
-              This run is <code>awaiting</code>. Approve to resume, or cancel.
-            </p>
-            <label for="approval-msg">Optional resume message</label>
-            <input id="approval-msg" placeholder="approved / details…" />
-            <div class="row">
-              <button id="approve">Approve / resume</button>
-              <button id="cancel" class="danger">Cancel</button>
+      <main class="main">
+        <div class="main-inner">
+          <section class="view" id="view-dispatch" data-view-panel="dispatch">
+            <h2 class="page-heading">What should the fleet do?</h2>
+
+            <div class="composer" role="form" aria-label="Dispatch a run">
+              <label class="visually-hidden" for="prompt">Prompt</label>
+              <textarea
+                id="prompt"
+                placeholder="@Browser open https://example.com and summarize the title"
+                rows="4"
+              ></textarea>
+              <div class="composer-footer">
+                <div
+                  class="agent-pills"
+                  id="agent-pills"
+                  role="group"
+                  aria-label="Agent"
+                >
+                  <button
+                    type="button"
+                    class="btn btn-pill agent-pill"
+                    data-agent="browser"
+                    aria-pressed="true"
+                  >
+                    browser
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-pill agent-pill"
+                    data-agent="altius"
+                    aria-pressed="false"
+                  >
+                    altius
+                  </button>
+                </div>
+                <div class="composer-actions">
+                  <button type="button" class="btn btn-secondary btn-pill" id="refresh">
+                    Refresh
+                  </button>
+                  <button type="button" class="btn btn-pill" id="send">Send</button>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      </section>
 
-      <section>
-        <h2>Runs</h2>
-        <ul id="runs" class="runs"></ul>
-      </section>
-    </main>
+            <p id="error" class="error-text" hidden></p>
+
+            <div id="detail" class="card" hidden>
+              <div class="detail-header">
+                <strong class="detail-id" id="detail-id"></strong>
+                <span id="detail-status" class="badge"></span>
+              </div>
+              <pre id="detail-body" class="detail-body"></pre>
+              <div id="approval" class="approval card-warn" hidden>
+                <h3 class="approval-title">Approve to continue</h3>
+                <p class="approval-copy">
+                  This run is waiting. Resume it, or cancel.
+                </p>
+                <label class="visually-hidden" for="approval-msg">Resume message</label>
+                <input
+                  class="input"
+                  id="approval-msg"
+                  type="text"
+                  placeholder="Optional note for the agent"
+                  autocomplete="off"
+                />
+                <div class="approval-actions">
+                  <button type="button" class="btn" id="approve">Resume</button>
+                  <button type="button" class="btn btn-danger" id="cancel">Cancel</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="view" id="view-runs" data-view-panel="runs">
+            <h2 class="section-heading">Runs</h2>
+            <ul id="runs" class="runs-list" aria-label="Runs"></ul>
+          </section>
+        </div>
+      </main>
+    </div>
     <script src="app.js"></script>
   </body>
 </html>
