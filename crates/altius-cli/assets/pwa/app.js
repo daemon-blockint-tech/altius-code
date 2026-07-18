@@ -1,12 +1,17 @@
 /* Altius Fleet PWA thin client - vanilla JS, zero build. */
 (() => {
   const THEME_KEY = "altius-fleet-theme";
+  const TOKEN_KEY = "altius-fleet-token";
   const THEME_CYCLE = ["system", "light", "dark"];
 
-  const apiBase = (() => {
-    const params = new URLSearchParams(location.search);
-    return (params.get("api") || location.origin).replace(/\/$/, "");
-  })();
+  const params = new URLSearchParams(location.search);
+  const apiBase = (params.get("api") || location.origin).replace(/\/$/, "");
+
+  // Bearer token: ?token= wins, then localStorage (P0 remote).
+  if (params.get("token")) {
+    localStorage.setItem(TOKEN_KEY, params.get("token"));
+  }
+  let authToken = localStorage.getItem(TOKEN_KEY) || "";
 
   const els = {
     prompt: document.getElementById("prompt"),
@@ -33,10 +38,12 @@
     mainInner: document.getElementById("main-inner"),
     sidebarHistory: document.getElementById("sidebar-history"),
     historyList: document.getElementById("history-list"),
+    sidebarMeta: document.querySelector(".sidebar-meta"),
   };
 
   let selectedId = null;
   let pollTimer = null;
+  let eventSource = null;
   let selectedAgent = "browser";
   const known = new Map();
 
@@ -58,9 +65,15 @@
     els.error.textContent = message;
   }
 
+  function authHeaders(extra = {}) {
+    const headers = { "content-type": "application/json", ...extra };
+    if (authToken) headers.authorization = `Bearer ${authToken}`;
+    return headers;
+  }
+
   async function api(path, options = {}) {
     const response = await fetch(`${apiBase}${path}`, {
-      headers: { "content-type": "application/json", ...(options.headers || {}) },
+      headers: authHeaders(options.headers || {}),
       ...options,
     });
     const text = await response.text();
@@ -105,6 +118,16 @@
     return "just now";
   }
 
+  function dateGroupLabel(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Earlier";
+    return date.toLocaleDateString(undefined, {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
+  }
+
   function badgeClass(status) {
     const knownStatus = [
       "created",
@@ -119,7 +142,7 @@
 
   function setAgent(agent) {
     selectedAgent = agent;
-    els.agentEyebrow.textContent = agent;
+    if (els.agentEyebrow) els.agentEyebrow.textContent = agent;
     for (const btn of els.agentPills.querySelectorAll("[data-agent]")) {
       const pressed = btn.dataset.agent === agent;
       btn.setAttribute("aria-pressed", pressed ? "true" : "false");
@@ -137,14 +160,14 @@
     }
   }
 
-  /* Home state: center the composer (Perplexity-style) until a run is open. */
   function updateHome() {
-    els.mainInner.classList.toggle("home", !selectedId);
+    if (els.mainInner) els.mainInner.classList.toggle("home", !selectedId);
   }
 
   function setView(view) {
     document.body.dataset.mobileView = view;
     for (const btn of [els.navDispatch, els.navRuns]) {
+      if (!btn) continue;
       const active = btn.dataset.view === view;
       btn.classList.toggle("active", active);
       if (active) btn.setAttribute("aria-current", "page");
@@ -165,7 +188,10 @@
     const icons = { system: "◐", light: "☀", dark: "☾" };
     els.themeIcon.textContent = icons[mode] || "◐";
     els.themeToggle.title = `Theme: ${mode} (click to cycle)`;
-    els.themeToggle.setAttribute("aria-label", `Color theme: ${mode}. Click to cycle.`);
+    els.themeToggle.setAttribute(
+      "aria-label",
+      `Color theme: ${mode}. Click to cycle.`
+    );
   }
 
   function initTheme() {
@@ -179,17 +205,70 @@
     applyTheme(next);
   }
 
+  function openRun(id) {
+    selectRun(id);
+    setView("dispatch");
+  }
+
+  function newRun() {
+    selectedId = null;
+    clearInterval(pollTimer);
+    pollTimer = null;
+    stopEvents();
+    renderDetail(null);
+    updateHome();
+    els.prompt.value = "";
+    setView("dispatch");
+    els.prompt.focus();
+    const runs = [...known.values()].sort(
+      (a, b) => new Date(b.created_at) - new Date(a.created_at)
+    );
+    renderRuns(runs);
+  }
+
+  function renderHistory(runs) {
+    if (!els.historyList || !els.sidebarHistory) return;
+    els.historyList.innerHTML = "";
+    if (!runs.length) {
+      els.sidebarHistory.hidden = true;
+      return;
+    }
+    els.sidebarHistory.hidden = false;
+    for (const run of runs.slice(0, 8)) {
+      const li = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "history-item" + (run.run_id === selectedId ? " active" : "");
+      btn.textContent = flattenParts(run.input).slice(0, 60) || "(empty)";
+      btn.title = flattenParts(run.input).slice(0, 200);
+      btn.addEventListener("click", () => openRun(run.run_id));
+      li.appendChild(btn);
+      els.historyList.appendChild(li);
+    }
+  }
+
   function renderRuns(runs) {
+    renderHistory(runs);
     els.runs.innerHTML = "";
     if (!runs.length) {
       const empty = document.createElement("li");
       empty.className = "runs-empty";
-      empty.textContent = "No runs yet. Dispatch one above to get started.";
+      empty.textContent = "No runs yet. Dispatch one to get started.";
       els.runs.appendChild(empty);
       return;
     }
+    let lastGroup = null;
     for (const run of runs) {
       known.set(run.run_id, run);
+      const group = dateGroupLabel(run.created_at);
+      if (group !== lastGroup) {
+        lastGroup = group;
+        const header = document.createElement("li");
+        header.className = "runs-group";
+        header.textContent = group;
+        els.runs.appendChild(header);
+      }
       const li = document.createElement("li");
       const btn = document.createElement("button");
       btn.type = "button";
@@ -204,16 +283,14 @@
         </div>
         <div class="list-row-preview">${escapeHtml(preview)}</div>
         <div class="list-row-meta">${escapeHtml(run.run_id)}</div>`;
-      btn.addEventListener("click", () => {
-        selectRun(run.run_id);
-        if (window.matchMedia("(max-width: 800px)").matches) setView("dispatch");
-      });
+      btn.addEventListener("click", () => openRun(run.run_id));
       li.appendChild(btn);
       els.runs.appendChild(li);
     }
   }
 
   function renderDetail(run) {
+    updateHome();
     if (!run) {
       els.detail.hidden = true;
       return;
@@ -240,14 +317,60 @@
     els.approval.hidden = run.status !== "awaiting";
   }
 
+  function stopEvents() {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+  }
+
+  function maybeEvents(run) {
+    stopEvents();
+    if (!run) return;
+    if (run.status !== "in-progress" && run.status !== "created") return;
+    if (typeof EventSource === "undefined") return;
+    try {
+      const url = new URL(`${apiBase}/runs/${run.run_id}/events`);
+      if (authToken) url.searchParams.set("token", authToken);
+      eventSource = new EventSource(url.toString());
+      eventSource.addEventListener("run", (ev) => {
+        try {
+          const next = JSON.parse(ev.data);
+          known.set(next.run_id, next);
+          renderDetail(next);
+          const runs = [...known.values()].sort(
+            (a, b) => new Date(b.created_at) - new Date(a.created_at)
+          );
+          renderRuns(runs);
+          if (
+            next.status !== "in-progress" &&
+            next.status !== "created"
+          ) {
+            stopEvents();
+          }
+        } catch {
+          /* ignore malformed */
+        }
+      });
+      eventSource.onerror = () => {
+        stopEvents();
+        maybePoll(run);
+      };
+    } catch {
+      maybePoll(run);
+    }
+  }
+
   async function refreshRuns() {
     showError("");
     try {
       const runs = await api("/runs");
       renderRuns(Array.isArray(runs) ? runs : []);
       if (selectedId) {
-        const current = known.get(selectedId) || (await api(`/runs/${selectedId}`));
+        const current =
+          known.get(selectedId) || (await api(`/runs/${selectedId}`));
         renderDetail(current);
+        maybeEvents(current);
         maybePoll(current);
       }
     } catch (err) {
@@ -259,6 +382,7 @@
     clearInterval(pollTimer);
     pollTimer = null;
     if (!run) return;
+    if (eventSource) return;
     if (run.status === "in-progress" || run.status === "created") {
       pollTimer = setInterval(() => selectRun(run.run_id, true), 1500);
     }
@@ -275,40 +399,65 @@
         (a, b) => new Date(b.created_at) - new Date(a.created_at)
       );
       renderRuns(runs);
+      maybeEvents(run);
       maybePoll(run);
     } catch (err) {
       if (!quiet) showError(err.message || String(err));
     }
   }
 
+  /** Parse leading slash skill: /scan /browser /audit /pay */
+  function resolveSkill(prompt) {
+    const m = prompt.match(/^\/(scan|browser|audit|pay)\b\s*/i);
+    if (!m) return { agent: selectedAgent, prompt };
+    const skill = m[1].toLowerCase();
+    const rest = prompt.slice(m[0].length).trim() || prompt;
+    const map = {
+      scan: "security",
+      audit: "security",
+      browser: "browser",
+      pay: "altius",
+    };
+    return { agent: map[skill] || selectedAgent, prompt: rest };
+  }
+
   async function sendRun() {
-    const prompt = els.prompt.value.trim();
-    if (!prompt) {
+    const raw = els.prompt.value.trim();
+    if (!raw) {
       showError("Enter a prompt before sending.");
       return;
     }
+    const { agent, prompt } = resolveSkill(raw);
+    if (agent !== selectedAgent) setAgent(agent);
+
     els.send.disabled = true;
-    els.send.textContent = "Sending…";
+    if (els.sendIcon) els.sendIcon.textContent = "…";
     showError("");
     try {
       const run = await api("/runs", {
         method: "POST",
         body: JSON.stringify({
-          agent_name: selectedAgent,
-          input: [{ role: "user", parts: [{ content_type: "text/plain", content: prompt }] }],
+          agent_name: agent,
+          input: [
+            {
+              role: "user",
+              parts: [{ content_type: "text/plain", content: prompt }],
+            },
+          ],
         }),
       });
       known.set(run.run_id, run);
       selectedId = run.run_id;
       await refreshRuns();
       renderDetail(run);
+      maybeEvents(run);
       maybePoll(run);
       setView("dispatch");
     } catch (err) {
       showError(err.message || String(err));
     } finally {
       els.send.disabled = false;
-      els.send.textContent = "Send";
+      if (els.sendIcon) els.sendIcon.textContent = "↑";
     }
   }
 
@@ -331,6 +480,7 @@
       });
       known.set(run.run_id, run);
       renderDetail(run);
+      maybeEvents(run);
       maybePoll(run);
       await refreshRuns();
     } catch (err) {
@@ -344,9 +494,13 @@
     if (!selectedId) return;
     els.cancel.disabled = true;
     try {
-      const run = await api(`/runs/${selectedId}/cancel`, { method: "POST", body: "{}" });
+      const run = await api(`/runs/${selectedId}/cancel`, {
+        method: "POST",
+        body: "{}",
+      });
       known.set(run.run_id, run);
       renderDetail(run);
+      stopEvents();
       maybePoll(run);
       await refreshRuns();
     } catch (err) {
@@ -362,11 +516,12 @@
     setAgent(btn.dataset.agent);
   });
 
+  if (els.navNew) els.navNew.addEventListener("click", newRun);
   els.navDispatch.addEventListener("click", () => setView("dispatch"));
   els.navRuns.addEventListener("click", () => setView("runs"));
   els.themeToggle.addEventListener("click", cycleTheme);
   els.send.addEventListener("click", sendRun);
-  els.refresh.addEventListener("click", refreshRuns);
+  if (els.refresh) els.refresh.addEventListener("click", refreshRuns);
   els.approve.addEventListener("click", resumeRun);
   els.cancel.addEventListener("click", cancelRun);
 
@@ -377,6 +532,12 @@
     }
   });
 
+  if (els.sidebarMeta) {
+    els.sidebarMeta.textContent = authToken
+      ? "localhost · bearer auth"
+      : "localhost · no auth";
+  }
+
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./sw.js").catch(() => {
       /* optional */
@@ -386,5 +547,6 @@
   initTheme();
   setAgent("browser");
   setView("dispatch");
+  updateHome();
   refreshRuns();
 })();
