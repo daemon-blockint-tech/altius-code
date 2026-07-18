@@ -18,6 +18,36 @@ pub enum Command {
     /// in it through the mandatory guardrail pipeline (policy, simulation,
     /// diff, approval, audit log) before broadcasting.
     Deploy(DeployArgs),
+    /// Run the multi-agent fleet (explorer → coder → security → release)
+    /// against a project. Specialists are LLM agents via OpenRouter; the
+    /// fleet can detect, build, test, lint, and preview a deploy plan —
+    /// it has no ability to sign or broadcast transactions.
+    Fleet(FleetArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct FleetArgs {
+    /// Project directory the fleet works on.
+    #[arg(long, default_value = ".")]
+    pub project: PathBuf,
+
+    /// What the fleet should accomplish.
+    #[arg(
+        long,
+        default_value = "Assess this SVM project: framework, build health, \
+                                 security posture, and a deployment plan preview."
+    )]
+    pub goal: String,
+
+    /// OpenRouter model id used by every specialist. Defaults to
+    /// $ALTIUS_FLEET_MODEL, or anthropic/claude-sonnet-4.5.
+    #[arg(long)]
+    pub model: Option<String>,
+
+    /// Per-specialist step budget (model calls, each optionally followed
+    /// by tool execution).
+    #[arg(long, default_value_t = 12)]
+    pub max_steps: usize,
 }
 
 #[derive(Debug, Parser)]
