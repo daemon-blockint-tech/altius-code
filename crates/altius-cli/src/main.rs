@@ -27,6 +27,7 @@ fn main() {
         Command::Deploy(args) => deploy_command::run_deploy(args),
         Command::Fleet(args) => match &args.command {
             FleetCommand::Run(run) => fleet_command::run_fleet_cmd(run),
+            FleetCommand::Mcp(mcp) => fleet_command::run_mcp_cmd(mcp),
         },
     };
 

@@ -1,0 +1,22 @@
+[package]
+name = "altius-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Protocol surfaces for the Altius fleet: BeeAI ACP run lifecycle, Editor ACP JSON-RPC codec, A2A agent card/tasks, ANP identity/discovery stubs"
+
+[dependencies]
+altius-core = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }

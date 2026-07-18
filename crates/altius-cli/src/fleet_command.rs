@@ -3,7 +3,7 @@ use std::sync::Arc;
 use altius_agents::{run_supervisor, LlmClient, OfflineLlmClient, OpenAiCompatibleClient};
 use altius_core::redact_secrets;
 
-use crate::cli::FleetRunArgs;
+use crate::cli::{FleetMcpArgs, FleetRunArgs, McpTransport};
 use crate::error::CliError;
 
 /// Execute `altius fleet run --prompt ...` headlessly.
@@ -54,4 +54,25 @@ pub fn run_fleet_cmd(args: &FleetRunArgs) -> Result<(), CliError> {
         println!("{safe}");
         Ok(())
     })
+}
+
+pub fn run_mcp_cmd(args: &FleetMcpArgs) -> Result<(), CliError> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| CliError::message(format!("tokio runtime: {error}")))?;
+    let workspace = args.workspace.clone();
+    match args.transport {
+        McpTransport::Stdio => rt
+            .block_on(altius_mcp::serve_stdio(workspace))
+            .map_err(|error| CliError::message(error.to_string())),
+        McpTransport::Http => {
+            let bind = args
+                .bind
+                .parse()
+                .map_err(|error| CliError::message(format!("invalid --bind address: {error}")))?;
+            rt.block_on(altius_mcp::serve_http(workspace, bind))
+                .map_err(|error| CliError::message(error.to_string()))
+        }
+    }
 }

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(name = "altius", version, about = "Altius Code SVM tooling")]
@@ -32,6 +32,8 @@ pub struct FleetArgs {
 pub enum FleetCommand {
     /// Run the supervisor graph headlessly against a prompt.
     Run(FleetRunArgs),
+    /// Serve safe SVM tools over the Model Context Protocol.
+    Mcp(FleetMcpArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -47,6 +49,27 @@ pub struct FleetRunArgs {
     /// Use the deterministic offline LLM (no network). Useful for demos and CI.
     #[arg(long)]
     pub offline: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum McpTransport {
+    Stdio,
+    Http,
+}
+
+#[derive(Debug, Parser)]
+pub struct FleetMcpArgs {
+    /// Workspace boundary for all MCP project paths.
+    #[arg(long, default_value = ".")]
+    pub workspace: PathBuf,
+
+    /// MCP transport to serve.
+    #[arg(long, value_enum, default_value_t = McpTransport::Stdio)]
+    pub transport: McpTransport,
+
+    /// HTTP bind address. Ignored for stdio.
+    #[arg(long, default_value = "127.0.0.1:8787")]
+    pub bind: String,
 }
 
 #[derive(Debug, Parser)]
