@@ -7,6 +7,7 @@ mod llm;
 mod prompts;
 mod roles;
 mod supervisor;
+mod tools;
 
 pub use error::{AgentError, AgentResult};
 pub use llm::{
@@ -14,6 +15,11 @@ pub use llm::{
 };
 pub use roles::{stub_roles, AgentRole};
 pub use supervisor::{
-    build_supervisor_graph, run_supervisor, run_supervisor_offline, run_supervisor_with,
-    FleetRoute, FleetState,
+    build_supervisor_graph, build_supervisor_graph_with, resolve_forced_route, run_supervisor,
+    run_supervisor_offline, run_supervisor_outcome, run_supervisor_outcome_for,
+    run_supervisor_outcome_with, run_supervisor_outcome_with_options, run_supervisor_with,
+    BrowserTooling, FleetRoute, FleetState, SupervisorOptions, SupervisorOutcome,
+};
+pub use tools::{
+    tool_specs_from_discovered, LocalTools, McpTools, ToolDispatcher, BROWSER_TOOL_PREFIX,
 };

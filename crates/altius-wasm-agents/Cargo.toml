@@ -4,9 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Capability-limited sandbox host for WASM specialist agents (stub: module validation and capability policy now, execution runtime later)"
+description = "Capability-limited sandbox host for WASM specialist agents: module validation, deny-by-default capability policy, and fuel/memory-metered execution (wasmtime feature)"
+
+[features]
+default = []
+wasmtime = ["dep:wasmtime"]
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+wasmtime = { workspace = true, optional = true }
+
+[dev-dependencies]
+wat = "1"

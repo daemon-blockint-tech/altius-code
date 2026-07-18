@@ -6,11 +6,17 @@ license.workspace = true
 repository.workspace = true
 description = "Domain ontology layer for the Altius fleet: built-in SVM/security schema plus a thin adapter trait for external OWL/RDF ontology MCP servers (open-ontologies style)"
 
+[features]
+default = []
+mcp = ["dep:rmcp", "dep:tokio"]
+
 [dependencies]
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+rmcp = { version = "2.2", default-features = false, features = ["client", "transport-child-process"], optional = true }
+tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

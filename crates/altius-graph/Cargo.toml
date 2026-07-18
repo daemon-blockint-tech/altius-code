@@ -8,7 +8,7 @@ description = "Tokio-based agent graph runtime (LangGraph-inspired, Altius-owned
 
 [features]
 default = []
-neo4j = ["dep:neo4rs"]
+neo4j = ["dep:neo4rs", "dep:base64"]
 
 [dependencies]
 altius-core = { workspace = true }
@@ -21,6 +21,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 neo4rs = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

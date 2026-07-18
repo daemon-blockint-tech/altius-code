@@ -10,14 +10,18 @@
 //! - [`schema`] — a small, built-in SVM/security ontology subset the
 //!   knowledge agent can use offline (classes, properties, subclass edges).
 //! - [`OntologyClient`] — the adapter trait an external ontology MCP server
-//!   (e.g. an open-ontologies deployment) will implement. Only the
-//!   [`StaticOntologyClient`] backed by the built-in schema ships now; the
-//!   MCP-backed client is an intentional stub until `altius-mcp` grows
-//!   client-side attach for it.
+//!   (e.g. an open-ontologies deployment) implements. [`StaticOntologyClient`]
+//!   backed by the built-in schema is always available; [`McpOntologyClient`]
+//!   (feature `mcp`) talks to an external OWL/RDF ontology MCP server and
+//!   treats its responses as untrusted input.
 
 pub mod schema;
 
 mod client;
+#[cfg(feature = "mcp")]
+mod mcp;
 
 pub use client::{OntologyClient, OntologyError, OntologyResult, StaticOntologyClient};
+#[cfg(feature = "mcp")]
+pub use mcp::{McpOntologyClient, McpOntologyConfig};
 pub use schema::{svm_security_schema, ClassDef, DomainSchema, PropertyDef};

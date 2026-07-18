@@ -9,16 +9,18 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AgentError, AgentResult};
-use crate::llm::{ChatMessage, LlmClient, OfflineLlmClient};
+use crate::llm::{ChatMessage, LlmClient, OfflineLlmClient, ToolSpec};
 use crate::prompts;
 use crate::roles::AgentRole;
+use crate::tools::{self, ToolDispatcher};
 
 /// Which specialist path the router selected.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FleetRoute {
     Explorer,
     Coder,
+    Browser,
     #[default]
     Both,
 }
@@ -26,7 +28,10 @@ pub enum FleetRoute {
 impl FleetRoute {
     pub fn parse(raw: &str) -> Self {
         let lower = raw.to_ascii_lowercase();
-        if lower.contains("explorer") && !lower.contains("coder") && !lower.contains("both") {
+        if lower.contains("browser") {
+            Self::Browser
+        } else if lower.contains("explorer") && !lower.contains("coder") && !lower.contains("both")
+        {
             Self::Explorer
         } else if lower.contains("coder") && !lower.contains("explorer") && !lower.contains("both")
         {
@@ -37,14 +42,34 @@ impl FleetRoute {
     }
 }
 
+/// Optional browser MCP tooling injected at graph-build time.
+#[derive(Clone)]
+pub struct BrowserTooling {
+    pub tools: Vec<ToolSpec>,
+    pub dispatcher: Arc<dyn ToolDispatcher>,
+}
+
+/// Knobs for a supervisor pass (agent routing + optional browser attach).
+#[derive(Clone, Default)]
+pub struct SupervisorOptions {
+    /// BeeAI ACP / CLI agent name (e.g. `"browser"`). Forces a route when set.
+    pub agent_name: Option<String>,
+    /// Live browser MCP tools. When `None`, the browser node runs as plain LLM.
+    pub browser: Option<BrowserTooling>,
+}
+
 /// Shared supervisor graph state.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct FleetState {
     pub prompt: String,
     pub plan: Option<String>,
     pub route: FleetRoute,
+    /// When set (e.g. by `agent_name=browser` or `@Browser` in the prompt),
+    /// the router preserves this route instead of re-parsing its reply.
+    pub forced_route: Option<FleetRoute>,
     pub exploration: Option<String>,
     pub code_notes: Option<String>,
+    pub browser_notes: Option<String>,
     pub critique: Option<String>,
     pub final_answer: Option<String>,
     pub trace: Vec<String>,
@@ -59,12 +84,38 @@ impl FleetState {
             ..Self::default()
         }
     }
+
+    pub fn with_options(mut self, options: &SupervisorOptions) -> Self {
+        if let Some(route) = resolve_forced_route(options.agent_name.as_deref(), &self.prompt) {
+            self.forced_route = Some(route);
+            self.route = route;
+        }
+        self
+    }
+}
+
+/// Map an agent name / `@Browser` mention onto a forced route.
+pub fn resolve_forced_route(agent_name: Option<&str>, prompt: &str) -> Option<FleetRoute> {
+    if let Some(name) = agent_name {
+        let lower = name.trim().trim_start_matches('@').to_ascii_lowercase();
+        if lower == "browser" {
+            return Some(FleetRoute::Browser);
+        }
+    }
+    if prompt.to_ascii_lowercase().contains("@browser") {
+        return Some(FleetRoute::Browser);
+    }
+    None
 }
 
 struct LlmNode {
     name: &'static str,
     system: &'static str,
     llm: Arc<dyn LlmClient>,
+    /// Tools offered to this node; empty means plain chat.
+    tools: Vec<ToolSpec>,
+    /// When set, tool calls go here. Otherwise local SVM tools are used.
+    dispatcher: Option<Arc<dyn ToolDispatcher>>,
     after: AfterFn,
 }
 
@@ -81,8 +132,25 @@ impl LlmNode {
             name,
             system,
             llm,
+            tools: Vec::new(),
+            dispatcher: None,
             after: Box::new(after),
         }
+    }
+
+    fn with_tools(mut self, tools: Vec<ToolSpec>) -> Self {
+        self.tools = tools;
+        self
+    }
+
+    fn with_dispatcher(
+        mut self,
+        tools: Vec<ToolSpec>,
+        dispatcher: Arc<dyn ToolDispatcher>,
+    ) -> Self {
+        self.tools = tools;
+        self.dispatcher = Some(dispatcher);
+        self
     }
 }
 
@@ -98,32 +166,67 @@ impl Node<FleetState> for LlmNode {
     ) -> altius_graph::GraphResult<NodeResult<FleetState>> {
         state.trace.push(self.name.to_owned());
         let user_blob = format!(
-            "User prompt:\n{}\n\nPlan:\n{}\n\nExploration:\n{}\n\nCode notes:\n{}\n\nCritique:\n{}",
+            "User prompt:\n{}\n\nPlan:\n{}\n\nExploration:\n{}\n\nCode notes:\n{}\n\nBrowser notes:\n{}\n\nCritique:\n{}",
             state.prompt,
             state.plan.as_deref().unwrap_or("(none)"),
             state.exploration.as_deref().unwrap_or("(none)"),
             state.code_notes.as_deref().unwrap_or("(none)"),
+            state.browser_notes.as_deref().unwrap_or("(none)"),
             state.critique.as_deref().unwrap_or("(none)"),
         );
-        let text = self
-            .llm
-            .complete(&[
-                ChatMessage::system(self.system),
-                ChatMessage::user(user_blob),
-            ])
+        let messages = vec![
+            ChatMessage::system(self.system),
+            ChatMessage::user(user_blob),
+        ];
+        let text = if self.tools.is_empty() {
+            self.llm.complete(&messages).await
+        } else if let Some(dispatcher) = &self.dispatcher {
+            tools::tool_loop(
+                self.llm.as_ref(),
+                &self.tools,
+                dispatcher.as_ref(),
+                messages,
+            )
             .await
-            .map_err(|e| altius_graph::GraphError::node_failed(self.name, e.to_string()))?;
+        } else {
+            let local = tools::LocalTools::new(tools::project_root_from_prompt(&state.prompt));
+            tools::tool_loop(self.llm.as_ref(), &self.tools, &local, messages).await
+        }
+        .map_err(|e| altius_graph::GraphError::node_failed(self.name, e.to_string()))?;
         Ok((self.after)(&text, state))
     }
 }
 
-/// Build the Phase A supervisor graph: router → explorer/coder → critic → finalize.
+/// Build the supervisor graph: router → explorer/coder/browser → critic → finalize.
 pub fn build_supervisor_graph(llm: Arc<dyn LlmClient>) -> AgentResult<Graph<FleetState>> {
+    build_supervisor_graph_with(llm, &SupervisorOptions::default())
+}
+
+/// Build the supervisor graph with optional browser MCP tooling.
+pub fn build_supervisor_graph_with(
+    llm: Arc<dyn LlmClient>,
+    options: &SupervisorOptions,
+) -> AgentResult<Graph<FleetState>> {
     let router_llm = Arc::clone(&llm);
     let explorer_llm = Arc::clone(&llm);
     let coder_llm = Arc::clone(&llm);
+    let browser_llm = Arc::clone(&llm);
     let critic_llm = Arc::clone(&llm);
     let finalize_llm = Arc::clone(&llm);
+
+    let mut browser_node = LlmNode::new(
+        AgentRole::Browser.as_str(),
+        prompts::BROWSER_SYSTEM,
+        browser_llm,
+        |text, mut state| {
+            state.browser_notes = Some(text.to_owned());
+            NodeResult::Continue(state)
+        },
+    );
+    if let Some(browser) = &options.browser {
+        browser_node =
+            browser_node.with_dispatcher(browser.tools.clone(), Arc::clone(&browser.dispatcher));
+    }
 
     let graph = GraphBuilder::new()
         .add_node(LlmNode::new(
@@ -132,19 +235,28 @@ pub fn build_supervisor_graph(llm: Arc<dyn LlmClient>) -> AgentResult<Graph<Flee
             router_llm,
             |text, mut state| {
                 state.plan = Some(text.to_owned());
-                state.route = parse_route_from_router(text);
+                if let Some(forced) = state.forced_route {
+                    state.route = forced;
+                } else {
+                    state.route = parse_route_from_router(text);
+                }
                 NodeResult::Continue(state)
             },
         ))
-        .add_node(LlmNode::new(
-            AgentRole::Explorer.as_str(),
-            prompts::EXPLORER_SYSTEM,
-            explorer_llm,
-            |text, mut state| {
-                state.exploration = Some(text.to_owned());
-                NodeResult::Continue(state)
-            },
-        ))
+        .add_node(
+            LlmNode::new(
+                AgentRole::Explorer.as_str(),
+                prompts::EXPLORER_SYSTEM,
+                explorer_llm,
+                |text, mut state| {
+                    state.exploration = Some(text.to_owned());
+                    NodeResult::Continue(state)
+                },
+            )
+            // Read-only detection and lint tools; deterministic clients that
+            // never emit tool calls (e.g. offline) are unaffected.
+            .with_tools(tools::explorer_tools()),
+        )
         .add_node(LlmNode::new(
             AgentRole::Coder.as_str(),
             prompts::CODER_SYSTEM,
@@ -154,6 +266,7 @@ pub fn build_supervisor_graph(llm: Arc<dyn LlmClient>) -> AgentResult<Graph<Flee
                 NodeResult::Continue(state)
             },
         ))
+        .add_node(browser_node)
         .add_node(LlmNode::new(
             AgentRole::Critic.as_str(),
             prompts::CRITIC_SYSTEM,
@@ -173,22 +286,19 @@ pub fn build_supervisor_graph(llm: Arc<dyn LlmClient>) -> AgentResult<Graph<Flee
             },
         ))
         .set_entry(AgentRole::Router.as_str())
-        .add_conditional_edge(AgentRole::Router.as_str(), |s: &FleetState| {
-            // Always enter the workers stage via a synthetic fan-out handled below.
-            // For explorer-only / coder-only we still use fan-out with one target
-            // by routing through dedicated edges.
-            match s.route {
-                FleetRoute::Explorer => Some("workers_explorer".into()),
-                FleetRoute::Coder => Some("workers_coder".into()),
-                FleetRoute::Both => Some("workers_both".into()),
-            }
+        .add_conditional_edge(AgentRole::Router.as_str(), |s: &FleetState| match s.route {
+            FleetRoute::Explorer => Some("workers_explorer".into()),
+            FleetRoute::Coder => Some("workers_coder".into()),
+            FleetRoute::Both => Some("workers_both".into()),
+            FleetRoute::Browser => Some("workers_browser".into()),
         })
-        // Internal dispatch nodes (no LLM) selected by the conditional edge.
         .add_node(DispatchNode::explorer_only())
         .add_node(DispatchNode::coder_only())
         .add_node(DispatchNode::both())
+        .add_node(DispatchNode::browser_only())
         .add_edge("workers_explorer", AgentRole::Explorer.as_str())
         .add_edge("workers_coder", AgentRole::Coder.as_str())
+        .add_edge("workers_browser", AgentRole::Browser.as_str())
         .add_fanout_join(
             "workers_both",
             [AgentRole::Explorer.as_str(), AgentRole::Coder.as_str()],
@@ -197,6 +307,7 @@ pub fn build_supervisor_graph(llm: Arc<dyn LlmClient>) -> AgentResult<Graph<Flee
         )
         .add_edge(AgentRole::Explorer.as_str(), AgentRole::Critic.as_str())
         .add_edge(AgentRole::Coder.as_str(), AgentRole::Critic.as_str())
+        .add_edge(AgentRole::Browser.as_str(), AgentRole::Critic.as_str())
         .add_edge(AgentRole::Critic.as_str(), "finalize")
         .build()
         .map_err(AgentError::from)?;
@@ -225,6 +336,9 @@ fn merge_worker_states(branches: Vec<FleetState>) -> FleetState {
         }
         if b.code_notes.is_some() {
             out.code_notes = b.code_notes;
+        }
+        if b.browser_notes.is_some() {
+            out.browser_notes = b.browser_notes;
         }
         for t in b.trace {
             if !out.trace.contains(&t) {
@@ -256,6 +370,11 @@ impl DispatchNode {
             name: "workers_both",
         }
     }
+    fn browser_only() -> Self {
+        Self {
+            name: "workers_browser",
+        }
+    }
 }
 
 #[async_trait]
@@ -273,21 +392,115 @@ impl Node<FleetState> for DispatchNode {
     }
 }
 
+/// How one supervisor pass ended.
+#[derive(Clone, Debug)]
+pub enum SupervisorOutcome {
+    /// The graph ran to completion.
+    Finished(FleetState),
+    /// The graph paused on a human-in-the-loop interrupt; callers decide
+    /// whether to surface this as an awaiting run or an error.
+    Awaiting {
+        reason: String,
+        node: String,
+        state: FleetState,
+    },
+}
+
+fn default_budget() -> Budget {
+    Budget::unlimited().with_max_steps(32).with_max_parallel(4)
+}
+
+/// Run the supervisor and surface HITL interrupts as
+/// [`SupervisorOutcome::Awaiting`] instead of an error.
+pub async fn run_supervisor_outcome_with(
+    llm: Arc<dyn LlmClient>,
+    checkpointer: Arc<dyn Checkpointer<FleetState>>,
+    budget: Budget,
+    prompt: impl Into<String>,
+) -> AgentResult<(RunId, SupervisorOutcome)> {
+    run_supervisor_outcome_with_options(
+        llm,
+        checkpointer,
+        budget,
+        prompt,
+        SupervisorOptions::default(),
+    )
+    .await
+}
+
+/// Like [`run_supervisor_outcome_with`] but accepts agent-name / browser options.
+pub async fn run_supervisor_outcome_with_options(
+    llm: Arc<dyn LlmClient>,
+    checkpointer: Arc<dyn Checkpointer<FleetState>>,
+    budget: Budget,
+    prompt: impl Into<String>,
+    options: SupervisorOptions,
+) -> AgentResult<(RunId, SupervisorOutcome)> {
+    let graph = Arc::new(build_supervisor_graph_with(llm, &options)?);
+    let executor = GraphExecutor::new(graph, checkpointer, budget);
+    let run_id = RunId::new();
+    let initial = FleetState::new(prompt).with_options(&options);
+
+    let outcome = match executor.run(run_id, initial).await? {
+        ExecutionOutcome::Finished { state, .. } => SupervisorOutcome::Finished(state),
+        ExecutionOutcome::Interrupted {
+            reason,
+            node,
+            state,
+            ..
+        } => SupervisorOutcome::Awaiting {
+            reason,
+            node,
+            state,
+        },
+    };
+    Ok((run_id, outcome))
+}
+
+/// [`run_supervisor_outcome_with`] with an in-memory checkpointer and the
+/// default budget.
+pub async fn run_supervisor_outcome(
+    llm: Arc<dyn LlmClient>,
+    prompt: impl Into<String>,
+) -> AgentResult<(RunId, SupervisorOutcome)> {
+    run_supervisor_outcome_with(
+        llm,
+        Arc::new(InMemoryCheckpointer::<FleetState>::new()),
+        default_budget(),
+        prompt,
+    )
+    .await
+}
+
+/// In-memory checkpointer + options (agent name / browser tooling).
+pub async fn run_supervisor_outcome_for(
+    llm: Arc<dyn LlmClient>,
+    prompt: impl Into<String>,
+    options: SupervisorOptions,
+) -> AgentResult<(RunId, SupervisorOutcome)> {
+    run_supervisor_outcome_with_options(
+        llm,
+        Arc::new(InMemoryCheckpointer::<FleetState>::new()),
+        default_budget(),
+        prompt,
+        options,
+    )
+    .await
+}
+
 /// Run the supervisor with a caller-supplied LLM and checkpointer.
+///
+/// A HITL interrupt is an error here; use [`run_supervisor_outcome_with`]
+/// when the caller can pause and resume.
 pub async fn run_supervisor_with(
     llm: Arc<dyn LlmClient>,
     checkpointer: Arc<dyn Checkpointer<FleetState>>,
     budget: Budget,
     prompt: impl Into<String>,
 ) -> AgentResult<(RunId, FleetState)> {
-    let graph = Arc::new(build_supervisor_graph(llm)?);
-    let executor = GraphExecutor::new(graph, checkpointer, budget);
-    let run_id = RunId::new();
-    let initial = FleetState::new(prompt);
-
-    match executor.run(run_id, initial).await? {
-        ExecutionOutcome::Finished { state, .. } => Ok((run_id, state)),
-        ExecutionOutcome::Interrupted { reason, .. } => Err(AgentError::message(format!(
+    match run_supervisor_outcome_with(llm, checkpointer, budget, prompt).await? {
+        (run_id, SupervisorOutcome::Finished(state)) => Ok((run_id, state)),
+        (_, SupervisorOutcome::Awaiting { reason, .. }) => Err(AgentError::message(format!(
             "supervisor interrupted (HITL): {reason}"
         ))),
     }
@@ -301,7 +514,7 @@ pub async fn run_supervisor(
     run_supervisor_with(
         llm,
         Arc::new(InMemoryCheckpointer::<FleetState>::new()),
-        Budget::unlimited().with_max_steps(32).with_max_parallel(4),
+        default_budget(),
         prompt,
     )
     .await
@@ -345,10 +558,88 @@ mod tests {
         assert!(state.final_answer.unwrap().contains("FINAL"));
     }
 
+    #[tokio::test]
+    async fn outcome_entry_point_finishes_offline() {
+        let (_run_id, outcome) =
+            run_supervisor_outcome(Arc::new(OfflineLlmClient), "find the detect module")
+                .await
+                .unwrap();
+        match outcome {
+            SupervisorOutcome::Finished(state) => assert!(state.final_answer.is_some()),
+            SupervisorOutcome::Awaiting { reason, .. } => {
+                panic!("offline run should not await: {reason}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_name_browser_forces_browser_route_offline() {
+        let (_run_id, outcome) = run_supervisor_outcome_for(
+            Arc::new(OfflineLlmClient),
+            "open https://example.com and summarize the title",
+            SupervisorOptions {
+                agent_name: Some("browser".into()),
+                browser: None,
+            },
+        )
+        .await
+        .unwrap();
+        match outcome {
+            SupervisorOutcome::Finished(state) => {
+                assert_eq!(state.route, FleetRoute::Browser);
+                assert_eq!(state.forced_route, Some(FleetRoute::Browser));
+                assert!(state.browser_notes.is_some());
+                assert!(state.trace.iter().any(|t| t == "browser"));
+                assert!(state.exploration.is_none());
+            }
+            SupervisorOutcome::Awaiting { reason, .. } => {
+                panic!("offline browser run should not await: {reason}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn at_browser_mention_forces_browser_route_offline() {
+        let (_run_id, outcome) = run_supervisor_outcome_for(
+            Arc::new(OfflineLlmClient),
+            "@Browser check https://example.com",
+            SupervisorOptions::default(),
+        )
+        .await
+        .unwrap();
+        match outcome {
+            SupervisorOutcome::Finished(state) => {
+                assert_eq!(state.route, FleetRoute::Browser);
+                assert!(state.browser_notes.is_some());
+            }
+            SupervisorOutcome::Awaiting { reason, .. } => {
+                panic!("offline @Browser run should not await: {reason}")
+            }
+        }
+    }
+
     #[test]
     fn route_parser() {
         assert_eq!(FleetRoute::parse("explorer"), FleetRoute::Explorer);
         assert_eq!(FleetRoute::parse("coder"), FleetRoute::Coder);
         assert_eq!(FleetRoute::parse("both"), FleetRoute::Both);
+        assert_eq!(FleetRoute::parse("browser"), FleetRoute::Browser);
+    }
+
+    #[test]
+    fn resolve_forced_route_from_agent_name_and_mention() {
+        assert_eq!(
+            resolve_forced_route(Some("browser"), "anything"),
+            Some(FleetRoute::Browser)
+        );
+        assert_eq!(
+            resolve_forced_route(Some("@Browser"), "anything"),
+            Some(FleetRoute::Browser)
+        );
+        assert_eq!(
+            resolve_forced_route(None, "please @Browser this"),
+            Some(FleetRoute::Browser)
+        );
+        assert_eq!(resolve_forced_route(Some("altius"), "find module"), None);
     }
 }

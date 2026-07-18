@@ -99,7 +99,7 @@ pub struct ResumeRunRequest {
 /// Build the BeeAI ACP run-lifecycle router.
 pub fn router(state: BeeAcpState) -> Router {
     Router::new()
-        .route("/runs", post(create_run))
+        .route("/runs", get(list_runs).post(create_run))
         .route("/runs/{id}", get(get_run).post(resume_run))
         .route("/runs/{id}/cancel", post(cancel_run))
         // Compatibility alias for early Altius clients. ACP's canonical
@@ -138,6 +138,26 @@ async fn apply_outcome(state: &BeeAcpState, run_id: RunId, outcome: RunOutcome) 
     }
 }
 
+/// Settle a background execution result against the store.
+///
+/// Transition failures are logged, not propagated: a cancel racing the
+/// spawned task makes the strict transition table reject the late outcome,
+/// which is expected — the cancel wins.
+async fn settle_run(state: &BeeAcpState, run_id: RunId, outcome: Result<RunOutcome>) {
+    let applied = match outcome {
+        Ok(outcome) => apply_outcome(state, run_id, outcome).await,
+        Err(err) => {
+            state
+                .store
+                .transition(run_id, RunStatus::Failed, None, Some(err.to_string()))
+                .await
+        }
+    };
+    if let Err(err) = applied {
+        tracing::warn!(run_id = %run_id, error = %err, "background run outcome not applied");
+    }
+}
+
 async fn create_run(
     State(state): State<BeeAcpState>,
     Json(request): Json<CreateRunRequest>,
@@ -151,16 +171,19 @@ async fn create_run(
         .store
         .transition(run_id, RunStatus::InProgress, None, None)
         .await?;
-    let run = match state.executor.execute(&started).await {
-        Ok(outcome) => apply_outcome(&state, run_id, outcome).await?,
-        Err(err) => {
-            state
-                .store
-                .transition(run_id, RunStatus::Failed, None, Some(err.to_string()))
-                .await?
-        }
-    };
-    Ok((StatusCode::CREATED, Json(run)))
+
+    // Execute in the background; the caller polls `GET /runs/{id}`.
+    let task_state = state.clone();
+    let task_run = started.clone();
+    tokio::spawn(async move {
+        let outcome = task_state.executor.execute(&task_run).await;
+        settle_run(&task_state, run_id, outcome).await;
+    });
+    Ok((StatusCode::ACCEPTED, Json(started)))
+}
+
+async fn list_runs(State(state): State<BeeAcpState>) -> Result<Json<Vec<Run>>> {
+    Ok(Json(state.store.list().await?))
 }
 
 async fn get_run(State(state): State<BeeAcpState>, Path(id): Path<String>) -> Result<Json<Run>> {
@@ -180,7 +203,7 @@ async fn resume_run(
     State(state): State<BeeAcpState>,
     Path(id): Path<String>,
     Json(request): Json<ResumeRunRequest>,
-) -> Result<Json<Run>> {
+) -> Result<(StatusCode, Json<Run>)> {
     if let Some(message) = &request.message {
         message.validate()?;
     }
@@ -192,16 +215,15 @@ async fn resume_run(
         .store
         .transition(run_id, RunStatus::InProgress, None, None)
         .await?;
-    let run = match state.executor.resume(&resumed, request.message).await {
-        Ok(outcome) => apply_outcome(&state, run_id, outcome).await?,
-        Err(err) => {
-            state
-                .store
-                .transition(run_id, RunStatus::Failed, None, Some(err.to_string()))
-                .await?
-        }
-    };
-    Ok(Json(run))
+
+    let task_state = state.clone();
+    let task_run = resumed.clone();
+    let message = request.message;
+    tokio::spawn(async move {
+        let outcome = task_state.executor.resume(&task_run, message).await;
+        settle_run(&task_state, run_id, outcome).await;
+    });
+    Ok((StatusCode::ACCEPTED, Json(resumed)))
 }
 
 #[cfg(test)]
@@ -262,24 +284,52 @@ mod tests {
         })
     }
 
+    /// Poll `GET /runs/{id}` until the run reaches `expected`.
+    async fn wait_for_status(app: &Router, id: &str, expected: &str) -> Value {
+        for _ in 0..200 {
+            let (status, body) = send(
+                app,
+                Request::get(format!("/runs/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            if body["status"] == expected {
+                return body;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("run {id} never reached status `{expected}`");
+    }
+
     #[tokio::test]
-    async fn create_run_completes_via_noop_executor() {
+    async fn create_run_is_accepted_and_completes_via_noop_executor() {
         let app = app(Arc::new(NoopExecutor));
         let (status, body) = send(&app, post_json("/runs", create_body())).await;
-        assert_eq!(status, StatusCode::CREATED);
-        assert_eq!(body["status"], "completed");
-        assert_eq!(body["output"][0]["parts"][0]["content"], "hi");
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["status"], "in-progress");
 
         let id = body["run_id"].as_str().unwrap();
-        let (status, fetched) = send(
+        let done = wait_for_status(&app, id, "completed").await;
+        assert_eq!(done["output"][0]["parts"][0]["content"], "hi");
+    }
+
+    #[tokio::test]
+    async fn list_runs_returns_created_runs() {
+        let app = app(Arc::new(NoopExecutor));
+        let (_status, created) = send(&app, post_json("/runs", create_body())).await;
+        let id = created["run_id"].as_str().unwrap().to_owned();
+        wait_for_status(&app, &id, "completed").await;
+
+        let (status, body) = send(
             &app,
-            Request::get(format!("/runs/{id}"))
-                .body(Body::empty())
-                .unwrap(),
+            Request::get("/runs").body(Body::empty()).unwrap(),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(fetched["status"], "completed");
+        let runs = body.as_array().expect("list should be an array");
+        assert!(runs.iter().any(|run| run["run_id"] == id));
     }
 
     #[tokio::test]
@@ -310,25 +360,29 @@ mod tests {
     #[tokio::test]
     async fn awaiting_run_resumes_to_completion() {
         let app = app(Arc::new(AwaitingExecutor));
-        let (_, created) = send(&app, post_json("/runs", create_body())).await;
-        assert_eq!(created["status"], "awaiting");
+        let (status, created) = send(&app, post_json("/runs", create_body())).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(created["status"], "in-progress");
         let id = created["run_id"].as_str().unwrap();
+        wait_for_status(&app, id, "awaiting").await;
 
         let resume = json!({
             "message": { "role": "user", "parts": [{ "content_type": "text/plain", "content": "answer" }] },
         });
         let (status, resumed) = send(&app, post_json(&format!("/runs/{id}"), resume)).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(resumed["status"], "completed");
-        assert_eq!(resumed["output"][0]["parts"][0]["content"], "answer");
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(resumed["status"], "in-progress");
+
+        let done = wait_for_status(&app, id, "completed").await;
+        assert_eq!(done["output"][0]["parts"][0]["content"], "answer");
     }
 
     #[tokio::test]
     async fn resume_of_completed_run_is_rejected() {
         let app = app(Arc::new(NoopExecutor));
         let (_, created) = send(&app, post_json("/runs", create_body())).await;
-        assert_eq!(created["status"], "completed");
         let id = created["run_id"].as_str().unwrap();
+        wait_for_status(&app, id, "completed").await;
 
         let (status, body) = send(&app, post_json(&format!("/runs/{id}"), json!({}))).await;
         assert_eq!(status, StatusCode::CONFLICT);
@@ -340,6 +394,7 @@ mod tests {
         let app = app(Arc::new(AwaitingExecutor));
         let (_, created) = send(&app, post_json("/runs", create_body())).await;
         let id = created["run_id"].as_str().unwrap();
+        wait_for_status(&app, id, "awaiting").await;
 
         let (status, cancelled) =
             send(&app, post_json(&format!("/runs/{id}/cancel"), json!({}))).await;

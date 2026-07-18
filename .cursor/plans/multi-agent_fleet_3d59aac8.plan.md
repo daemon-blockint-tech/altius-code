@@ -10,13 +10,13 @@ todos:
     status: completed
   - id: phase-c-payments
     content: Extend TxKind with Payment; build altius-payments x402/MPP adapter through TxGuard + altius-signer
-    status: pending
+    status: completed
   - id: phase-d-knowledge-wasm
     content: Ship Neo4j schema + altius-ontology MCP client + altius-wasm-agents sandbox; wire knowledge/payment specialists
-    status: pending
+    status: completed
   - id: phase-e-hardening-docs
     content: Add tracing/budgets/eval, Compose+CI Neo4j, README/ACP disambiguation, FLEET_ARCHITECTURE spec
-    status: pending
+    status: completed
 isProject: false
 ---
 

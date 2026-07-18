@@ -70,6 +70,17 @@ pub struct FleetServeArgs {
     /// Use the deterministic offline LLM for BeeAI ACP run execution.
     #[arg(long)]
     pub offline: bool,
+
+    /// Command used to launch the optional browser MCP stdio server
+    /// (e.g. `npx`). Overrides `ALTIUS_BROWSER_MCP_CMD` when set.
+    #[arg(long)]
+    pub browser_mcp_cmd: Option<String>,
+
+    /// JSON array of arguments for `--browser-mcp-cmd`
+    /// (e.g. `["@playwright/mcp@latest"]`). Overrides
+    /// `ALTIUS_BROWSER_MCP_ARGS` when set.
+    #[arg(long)]
+    pub browser_mcp_args: Option<String>,
 }
 
 #[derive(Debug, Parser)]

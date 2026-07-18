@@ -13,7 +13,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    # Pin to actions/checkout v4.2.2
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
     - name: Check formatting
       run: cargo fmt --all -- --check
     - name: Build
@@ -43,6 +44,7 @@ jobs:
       ALTIUS_NEO4J_USER: neo4j
       ALTIUS_NEO4J_PASSWORD: altius-dev
     steps:
-    - uses: actions/checkout@v4
+    # Pin to actions/checkout v4.2.2
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
     - name: Run Neo4j integration tests
       run: cargo test -p altius-memory --features neo4j --verbose

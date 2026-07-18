@@ -1,16 +1,13 @@
-use std::path::PathBuf;
+//! Compatibility shim around [`crate::mcp_client`] for the historical
+//! agent-lsp attachment API.
 
-use rmcp::{
-    service::{RoleClient, RunningService},
-    transport::{ConfigureCommandExt, TokioChildProcess},
-    ServiceExt,
-};
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::process::Command;
 
-const MAX_ARGUMENTS: usize = 64;
-const MAX_ARGUMENT_LEN: usize = 4096;
+use crate::mcp_client::{attach_mcp, AttachedMcp, McpAttachConfig, McpClientError};
 
 /// Configuration for an optional external agent-lsp MCP stdio process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,89 +35,73 @@ pub enum AgentLspError {
 /// The child process receives no credentials from Altius. Environment
 /// inheritance and executable selection remain explicit caller policy.
 pub struct AgentLspAttachment {
-    service: RunningService<RoleClient, ()>,
+    inner: Arc<AttachedMcp>,
 }
 
 impl AgentLspAttachment {
     pub async fn tool_names(&self) -> Result<Vec<String>, AgentLspError> {
-        self.service
-            .list_all_tools()
-            .await
-            .map(|tools| {
-                tools
-                    .into_iter()
-                    .map(|tool| tool.name.to_string())
-                    .collect()
-            })
-            .map_err(|error| AgentLspError::Request(error.to_string()))
+        Ok(self
+            .inner
+            .tools()
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect())
     }
 
     pub fn is_closed(&self) -> bool {
-        self.service.is_closed()
+        self.inner.is_closed()
     }
 
-    pub async fn close(mut self) -> Result<(), AgentLspError> {
-        self.service
-            .close()
-            .await
-            .map_err(|error| AgentLspError::Shutdown(error.to_string()))?;
-        Ok(())
+    pub async fn close(self) -> Result<(), AgentLspError> {
+        match Arc::try_unwrap(self.inner) {
+            Ok(attached) => attached.close().await.map_err(map_error),
+            Err(_) => Ok(()),
+        }
+    }
+
+    pub fn inner(&self) -> &Arc<AttachedMcp> {
+        &self.inner
     }
 }
 
 pub async fn attach_agent_lsp(config: AgentLspConfig) -> Result<AgentLspAttachment, AgentLspError> {
-    validate_config(&config)?;
-    let command_name = config.command;
-    let args = config.args;
-    let working_directory = config.working_directory;
-    let path = std::env::var_os("PATH");
-    let transport = TokioChildProcess::new(Command::new(command_name).configure(|command| {
-        command.env_clear();
-        if let Some(path) = path {
-            command.env("PATH", path);
-        }
-        command.args(args);
-        if let Some(directory) = working_directory {
-            command.current_dir(directory);
-        }
-    }))
-    .map_err(|error| AgentLspError::Start(error.to_string()))?;
-    let service = ()
-        .serve(transport)
-        .await
-        .map_err(|error| AgentLspError::Start(error.to_string()))?;
-    Ok(AgentLspAttachment { service })
+    let attached = attach_mcp(McpAttachConfig {
+        name: "agent-lsp".into(),
+        command: config.command,
+        args: config.args,
+        working_directory: config.working_directory,
+        env_extras: vec![],
+    })
+    .await
+    .map_err(map_error)?;
+    Ok(AgentLspAttachment {
+        inner: Arc::new(attached),
+    })
 }
 
-fn validate_config(config: &AgentLspConfig) -> Result<(), AgentLspError> {
-    if config.command.trim().is_empty() || config.command.len() > MAX_ARGUMENT_LEN {
-        return Err(AgentLspError::InvalidConfig(
-            "command must be a non-empty bounded string".into(),
-        ));
+fn map_error(error: McpClientError) -> AgentLspError {
+    match error {
+        McpClientError::InvalidConfig(message) => AgentLspError::InvalidConfig(message),
+        McpClientError::Start(_, message) => AgentLspError::Start(message),
+        McpClientError::TooMany => AgentLspError::Start("too many MCP attachments".into()),
+        McpClientError::Request(_, message) => AgentLspError::Request(message),
+        McpClientError::NotFound(name) => AgentLspError::Request(format!("not found: {name}")),
+        McpClientError::Shutdown(_, message) => AgentLspError::Shutdown(message),
     }
-    if config.args.len() > MAX_ARGUMENTS {
-        return Err(AgentLspError::InvalidConfig("too many arguments".into()));
-    }
-    if config.args.iter().any(|arg| arg.len() > MAX_ARGUMENT_LEN) {
-        return Err(AgentLspError::InvalidConfig(
-            "an argument exceeds the length limit".into(),
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn rejects_empty_command() {
-        let error = validate_config(&AgentLspConfig {
+    #[tokio::test]
+    async fn rejects_empty_command() {
+        let result = attach_agent_lsp(AgentLspConfig {
             command: " ".into(),
             args: vec![],
             working_directory: None,
         })
-        .unwrap_err();
-        assert!(matches!(error, AgentLspError::InvalidConfig(_)));
+        .await;
+        assert!(matches!(result, Err(AgentLspError::InvalidConfig(_))));
     }
 }

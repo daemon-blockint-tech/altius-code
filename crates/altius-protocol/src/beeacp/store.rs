@@ -22,6 +22,9 @@ pub trait RunStore: Send + Sync {
     /// Fetch a run by id.
     async fn get(&self, run_id: RunId) -> Result<Run>;
 
+    /// List known runs (newest first when the implementation can order).
+    async fn list(&self) -> Result<Vec<Run>>;
+
     /// Atomically transition a run to `next`, optionally attaching output
     /// or an error message. Returns the updated run.
     async fn transition(
@@ -66,6 +69,12 @@ impl RunStore for InMemoryRunStore {
             .get(&run_id)
             .cloned()
             .ok_or_else(|| ProtocolError::not_found("run", run_id.to_string()))
+    }
+
+    async fn list(&self) -> Result<Vec<Run>> {
+        let mut runs: Vec<Run> = self.runs.read().await.values().cloned().collect();
+        runs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(runs)
     }
 
     async fn transition(
@@ -165,6 +174,22 @@ mod tests {
             .transition(id, RunStatus::InProgress, None, None)
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn list_returns_newest_first() {
+        let store = InMemoryRunStore::new();
+        let older = new_run();
+        let older_id = older.run_id;
+        store.create(older).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let newer = new_run();
+        let newer_id = newer.run_id;
+        store.create(newer).await.unwrap();
+        let listed = store.list().await.unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].run_id, newer_id);
+        assert_eq!(listed[1].run_id, older_id);
     }
 
     #[tokio::test]

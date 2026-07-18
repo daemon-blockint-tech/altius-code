@@ -19,30 +19,56 @@ pub struct ChatMessage {
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// For [`Role::Tool`] messages: id of the tool call this result answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// For [`Role::Assistant`] messages that requested tool calls.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
 }
 
 impl ChatMessage {
-    pub fn system(content: impl Into<String>) -> Self {
+    fn plain(role: Role, content: impl Into<String>) -> Self {
         Self {
-            role: Role::System,
+            role,
             content: content.into(),
             name: None,
+            tool_call_id: None,
+            tool_calls: Vec::new(),
         }
+    }
+
+    pub fn system(content: impl Into<String>) -> Self {
+        Self::plain(Role::System, content)
     }
 
     pub fn user(content: impl Into<String>) -> Self {
-        Self {
-            role: Role::User,
-            content: content.into(),
-            name: None,
-        }
+        Self::plain(Role::User, content)
     }
 
     pub fn assistant(content: impl Into<String>) -> Self {
+        Self::plain(Role::Assistant, content)
+    }
+
+    /// Assistant turn that requested tool calls; echoed back to the provider
+    /// so the following [`Role::Tool`] results have a valid parent.
+    pub fn assistant_tool_calls(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
         Self {
-            role: Role::Assistant,
-            content: content.into(),
-            name: None,
+            tool_calls,
+            ..Self::plain(Role::Assistant, content)
+        }
+    }
+
+    /// Result of executing one tool call.
+    pub fn tool(
+        tool_call_id: impl Into<String>,
+        name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: Some(name.into()),
+            tool_call_id: Some(tool_call_id.into()),
+            ..Self::plain(Role::Tool, content)
         }
     }
 }
@@ -56,7 +82,7 @@ pub struct ToolSpec {
     pub parameters: serde_json::Value,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
@@ -126,12 +152,50 @@ impl OpenAiCompatibleClient {
 struct ChatCompletionRequest<'a> {
     model: &'a str,
     messages: Vec<ApiMessage<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<ApiTool<'a>>,
 }
 
 #[derive(Serialize)]
 struct ApiMessage<'a> {
     role: &'a str,
     content: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tool_calls: Vec<ApiToolCall<'a>>,
+}
+
+/// OpenAI function-calling tool definition: `{"type":"function","function":{...}}`.
+#[derive(Serialize)]
+struct ApiTool<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    function: ApiFunctionSpec<'a>,
+}
+
+#[derive(Serialize)]
+struct ApiFunctionSpec<'a> {
+    name: &'a str,
+    description: &'a str,
+    parameters: &'a serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct ApiToolCall<'a> {
+    id: &'a str,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    function: ApiFunctionCall<'a>,
+}
+
+#[derive(Serialize)]
+struct ApiFunctionCall<'a> {
+    name: &'a str,
+    /// The wire format carries arguments as a JSON-encoded string.
+    arguments: String,
 }
 
 #[derive(Deserialize)]
@@ -147,11 +211,29 @@ struct Choice {
 #[derive(Deserialize)]
 struct ChoiceMessage {
     content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<ResponseToolCall>,
 }
 
-#[async_trait]
-impl LlmClient for OpenAiCompatibleClient {
-    async fn complete(&self, messages: &[ChatMessage]) -> AgentResult<String> {
+#[derive(Deserialize)]
+struct ResponseToolCall {
+    id: String,
+    function: ResponseFunctionCall,
+}
+
+#[derive(Deserialize)]
+struct ResponseFunctionCall {
+    name: String,
+    /// JSON-encoded string on the wire; parsed leniently into a Value.
+    arguments: String,
+}
+
+impl OpenAiCompatibleClient {
+    async fn chat(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolSpec],
+    ) -> AgentResult<ChoiceMessage> {
         let api_messages: Vec<ApiMessage<'_>> = messages
             .iter()
             .map(|m| ApiMessage {
@@ -162,6 +244,31 @@ impl LlmClient for OpenAiCompatibleClient {
                     Role::Tool => "tool",
                 },
                 content: &m.content,
+                name: m.name.as_deref(),
+                tool_call_id: m.tool_call_id.as_deref(),
+                tool_calls: m
+                    .tool_calls
+                    .iter()
+                    .map(|call| ApiToolCall {
+                        id: &call.id,
+                        kind: "function",
+                        function: ApiFunctionCall {
+                            name: &call.name,
+                            arguments: call.arguments.to_string(),
+                        },
+                    })
+                    .collect(),
+            })
+            .collect();
+        let api_tools: Vec<ApiTool<'_>> = tools
+            .iter()
+            .map(|tool| ApiTool {
+                kind: "function",
+                function: ApiFunctionSpec {
+                    name: &tool.name,
+                    description: &tool.description,
+                    parameters: &tool.parameters,
+                },
             })
             .collect();
 
@@ -173,6 +280,7 @@ impl LlmClient for OpenAiCompatibleClient {
             .json(&ChatCompletionRequest {
                 model: &self.model,
                 messages: api_messages,
+                tools: api_tools,
             })
             .send()
             .await
@@ -194,8 +302,39 @@ impl LlmClient for OpenAiCompatibleClient {
             .choices
             .into_iter()
             .next()
-            .and_then(|c| c.message.content)
+            .map(|c| c.message)
             .ok_or_else(|| AgentError::llm("empty completion choices"))
+    }
+}
+
+#[async_trait]
+impl LlmClient for OpenAiCompatibleClient {
+    async fn complete(&self, messages: &[ChatMessage]) -> AgentResult<String> {
+        self.chat(messages, &[])
+            .await?
+            .content
+            .ok_or_else(|| AgentError::llm("empty completion choices"))
+    }
+
+    async fn complete_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolSpec],
+    ) -> AgentResult<(String, Vec<ToolCall>)> {
+        let message = self.chat(messages, tools).await?;
+        let calls = message
+            .tool_calls
+            .into_iter()
+            .map(|call| ToolCall {
+                id: call.id,
+                name: call.function.name,
+                // Providers occasionally emit arguments that are not valid
+                // JSON; keep the raw text so the tool can still see it.
+                arguments: serde_json::from_str(&call.function.arguments)
+                    .unwrap_or(serde_json::Value::String(call.function.arguments)),
+            })
+            .collect();
+        Ok((message.content.unwrap_or_default(), calls))
     }
 }
 
@@ -230,7 +369,9 @@ impl LlmClient for OfflineLlmClient {
             .to_ascii_lowercase();
 
         let reply = if system.contains("ROUTER") {
-            let route = if prompt_section.contains("refactor")
+            let route = if prompt_section.contains("@browser") {
+                "browser"
+            } else if prompt_section.contains("refactor")
                 || prompt_section.contains("implement")
                 || prompt_section.contains("edit")
             {
@@ -254,6 +395,11 @@ impl LlmClient for OfflineLlmClient {
         } else if system.contains("CODER") {
             format!(
                 "CODE_NOTES: Proposed safe, non-signing edits for «{}». No transactions constructed.",
+                prompt_section.trim()
+            )
+        } else if system.contains("BROWSER") {
+            format!(
+                "BROWSER: Offline pass for «{}». No live browser MCP tools were invoked.",
                 prompt_section.trim()
             )
         } else if system.contains("CRITIC") {

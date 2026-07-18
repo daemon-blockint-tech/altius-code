@@ -1,10 +1,10 @@
 //! Adapter trait for ontology backends.
 //!
 //! [`StaticOntologyClient`] serves the built-in schema and is what the
-//! knowledge agent uses today. An MCP-backed client speaking to an external
-//! OWL/RDF ontology server (open-ontologies style) is an intentional stub:
-//! it lands once `altius-mcp` exposes client-side attach for external
-//! servers, and its remote responses will be treated as untrusted input.
+//! knowledge agent uses offline. For an external OWL/RDF ontology MCP
+//! server (open-ontologies style), enable the `mcp` feature and use
+//! [`crate::McpOntologyClient`] — its remote responses are treated as
+//! untrusted input.
 
 use async_trait::async_trait;
 use thiserror::Error;

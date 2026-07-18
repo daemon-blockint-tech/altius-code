@@ -9,6 +9,9 @@ description = "Altius fleet agent roles, LLM client trait, and supervisor graph"
 [dependencies]
 altius-core = { workspace = true }
 altius-graph = { workspace = true }
+altius-mcp = { workspace = true, features = ["mcp-client"] }
+altius-svm-detect = { workspace = true }
+altius-svm-tools = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 reqwest = { workspace = true }
@@ -19,4 +22,5 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 tokio = { workspace = true }

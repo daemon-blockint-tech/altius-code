@@ -90,15 +90,15 @@ WASM CDT tooling would live as an optional specialist on `altius-wasm-agents`.
 | `altius-core` | shared | IDs (`RunId`, `StepId`, …), budgets, redaction |
 | `altius-graph` | fleet core | Tokio graph runtime: nodes, edges, checkpoints, fan-out/fan-in, HITL interrupts; `MemoryStore` trait |
 | `altius-agents` | fleet core | Role prompt/policy packs + supervisor graph (router → explorer/coder → critic → finalize) |
-| `altius-mcp` | tool plane | MCP server wrapping detect/build/test/lint |
+| `altius-mcp` | tool plane | MCP server wrapping detect/build/test/lint; optional MCP client multi-attach (`mcp-client`) for browser / agent-lsp |
 | `altius-protocol` | ingress | Editor ACP codec, BeeAI ACP runs, A2A card/tasks, ANP stubs, shared input limits |
 | `altius-payments` | tool plane | x402 402-challenge parsing → `TxKind::Payment` `TxRequest` → settlement **only** via `TxGuard::submit` → `X-PAYMENT` proof header |
 | `altius-memory` | state | Neo4j knowledge graph (feature `neo4j`) + in-memory fallback; redacted JSONL trajectory logging |
-| `altius-ontology` | knowledge | Built-in SVM/security domain schema + `OntologyClient` adapter trait for external ontology MCP servers |
-| `altius-wasm-agents` | tool plane | Capability-limited WASM module registry (deny-by-default); execution runtime is a deliberate stub |
+| `altius-ontology` | knowledge | Built-in SVM/security domain schema + `StaticOntologyClient`; MCP-backed `McpOntologyClient` (feature `mcp`) for external OWL/RDF servers |
+| `altius-wasm-agents` | tool plane | Capability-limited WASM host (deny-by-default); fuel/memory-metered execution behind feature `wasmtime` |
 | `altius-txguard` | guardrail | Policy → simulate → diff → approve → audit → sign; `TxKind::Payment` is irreversible and approval-gated by default |
 | `altius-signer` | guardrail | Isolated signer process, `Pubkey`/`Sign` only |
-| `altius-cli` | ingress | `altius detect | deploy | fleet run|serve|mcp|acp|a2a` |
+| `altius-cli` | ingress | `altius detect | deploy | fleet run|serve|mcp|acp|a2a`; serves PWA at `/app/` |
 
 Dependency direction stays acyclic:
 `cli → agents/protocol → graph/mcp/memory/payments → core/txguard/svm-*`.
@@ -108,18 +108,28 @@ Dependency direction stays acyclic:
 | Agent | Responsibility | Dangerous tools |
 |---|---|---|
 | `router` | Decompose, route, merge, enforce budgets | none |
-| `explorer` | Codebase search / intelligence | read-only |
+| `explorer` | Codebase search / intelligence | read-only (`detect_project`, `lint_project` via tool-use loop) |
 | `coder` | Edits, builds, tests | writes files; no signing |
+| `browser` | Web automation via attached browser MCP | read/interact only; `browser_*` tool allowlist; no TxGuard path |
 | `security` | Lint/audit review | read-only |
 | `deployer` | Produces `TxRequest`s only | must call TxGuard |
 | `payment` | x402 paid API calls | must call TxGuard (`TxKind::Payment`) |
 | `knowledge` | Neo4j + ontology queries | schema-gated graph writes |
 | `critic` | Trajectory QA before finalize | none |
 
-Router, explorer, coder, and critic are live graph nodes; security,
-deployer, payment, and knowledge have prompt/policy packs and backing crates
-but their graph-node wiring is still pending (see `stub_roles()` in
-`altius-agents`).
+Router, explorer, coder, browser, and critic are live graph nodes. The
+explorer node runs a bounded `tool_loop` against local SVM tools; the
+browser node does the same against an optional external MCP attachment
+(e.g. Playwright) when `agent_name=browser` or the prompt contains
+`@Browser`. Security, deployer, payment, and knowledge have prompt/policy
+packs and backing crates but their graph-node wiring is still pending
+(see `stub_roles()` in `altius-agents`).
+
+Browser MCP attach is opt-in at `altius fleet serve` via
+`--browser-mcp-cmd` / `ALTIUS_BROWSER_MCP_CMD` (args:
+`--browser-mcp-args` or `ALTIUS_BROWSER_MCP_ARGS` as a JSON array). A
+zero-build PWA thin client is served at `/app/` for dispatch, run list,
+and awaiting-approval resume.
 
 ## 5. Payments (x402) flow
 
@@ -141,18 +151,29 @@ but their graph-node wiring is still pending (see `stub_roles()` in
 ## 6. Knowledge and state
 
 - **Per-run state:** `altius-graph` checkpoints typed state after each node
-  (`Checkpointer`), through the `MemoryStore` trait (in-memory default).
+  (`Checkpointer`), through the `MemoryStore` trait (in-memory default;
+  `Neo4jMemoryStore` behind feature `neo4j` persists
+  `(:Run)-[:HAS_CHECKPOINT]->(:Checkpoint)` and `(:KvEntry)` scratch
+  values with base64 payloads).
 - **Cross-session knowledge:** `altius-memory` persists `Run`, `Step`,
   `Artifact`, `Contract`, `Vulnerability`, `Skill` nodes with `EXECUTED`,
   `HAS_STEP`, `PRODUCED`, `CALLED`, `DEPLOYED`, `PAID`,
   `HAS_VULNERABILITY`, `HAS_SKILL`, `HAS_CHECKPOINT` relationships. Schema
   statements are idempotent (`IF NOT EXISTS`) and applied at startup.
+- **Ontology:** `StaticOntologyClient` serves the built-in SVM/security
+  schema offline; `McpOntologyClient` (feature `mcp`) attaches to an
+  external ontology MCP server over stdio and bounds-checks every response
+  as untrusted input.
+- **WASM specialists:** `WasmAgentHost` validates modules and enforces a
+  deny-by-default capability policy. With feature `wasmtime`, `run_module`
+  executes the guest ABI (`memory` + `alloc` + `run`) with fuel and linear
+  memory caps and **no host imports** (no WASI, no signing).
 - **Trajectories:** `JsonlTrajectoryLogger` appends redacted per-step events
   as JSONL, independent of Neo4j.
 - Neo4j is always optional: feature `neo4j`, in-memory fallback for tests
   and offline CI. Locally: `docker compose up -d neo4j`, then
   `ALTIUS_NEO4J_URI=bolt://127.0.0.1:7687 cargo test -p altius-memory
-  --features neo4j`.
+  --features neo4j` (and likewise `-p altius-graph --features neo4j`).
 
 ## 7. Security invariants (non-negotiable)
 
@@ -172,10 +193,25 @@ but their graph-node wiring is still pending (see `stub_roles()` in
 ## 8. Intentional stubs / future work
 
 - ANP `did:wba` verification and full discovery.
-- WASM execution runtime (wasmtime-class with fuel metering) behind the
-  existing `WasmAgentHost` API.
-- MCP client-side attach for external servers (agent-lsp, ontology MCP).
 - Graph-node wiring for security/deployer/payment/knowledge specialists.
+- Host-function surface for WASM modules that need `fs_read` /
+  `network` (today those capabilities are recorded but unused — guests
+  get no imports).
 - SPL-token x402 settlement.
 - Eval harness; adversarial prompt-injection fixtures only if explicitly
   enabled (no third-party leaked prompts, ever).
+- Mobile-facing auth (bearer), SSE/push notifications, and durable
+  Neo4j-backed `RunStore` for remote phone clients.
+
+### Done in this layer (no longer stubs)
+
+- MCP client-side attach (`altius-mcp` `mcp-client` feature): multi-attach
+  registry, `call_tool`, env allowlist; agent-lsp shim retained.
+- `@Browser` dispatch: `FleetRoute::Browser` + browser specialist node +
+  prefix-allowlisted MCP tools (`browser_*`).
+- PWA thin client at `/app/` (chat / run list / approval card).
+- `Neo4jMemoryStore` Cypher for checkpoints + kv (feature `neo4j`).
+- `McpOntologyClient` for external OWL/RDF ontology MCP servers
+  (feature `mcp`), with bounded untrusted-response decoding.
+- Fuel- and memory-metered WASM execution via wasmtime (feature
+  `wasmtime`); guest ABI `memory` + `alloc` + `run`, no host imports.

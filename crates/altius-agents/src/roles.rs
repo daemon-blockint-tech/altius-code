@@ -9,6 +9,8 @@ pub enum AgentRole {
     Explorer,
     Coder,
     Critic,
+    /// Web automation via an attached browser MCP server (`@Browser`).
+    Browser,
     /// Stub until Phase B tooling wiring.
     Security,
     /// Stub — must call TxGuard when implemented (Phase C adjacent).
@@ -31,6 +33,7 @@ impl AgentRole {
             Self::Explorer => "explorer",
             Self::Coder => "coder",
             Self::Critic => "critic",
+            Self::Browser => "browser",
             Self::Security => "security",
             Self::Deployer => "deployer",
             Self::Payment => "payment",
@@ -44,6 +47,7 @@ impl AgentRole {
             Self::Explorer => prompts::EXPLORER_SYSTEM,
             Self::Coder => prompts::CODER_SYSTEM,
             Self::Critic => prompts::CRITIC_SYSTEM,
+            Self::Browser => prompts::BROWSER_SYSTEM,
             Self::Security => prompts::SECURITY_STUB_SYSTEM,
             Self::Deployer => prompts::DEPLOYER_STUB_SYSTEM,
             Self::Payment => prompts::PAYMENT_STUB_SYSTEM,
@@ -51,11 +55,11 @@ impl AgentRole {
         }
     }
 
-    /// Roles with a real Phase A node implementation in the supervisor graph.
+    /// Roles with a real node implementation in the supervisor graph.
     pub fn phase_a_active(self) -> bool {
         matches!(
             self,
-            Self::Router | Self::Explorer | Self::Coder | Self::Critic
+            Self::Router | Self::Explorer | Self::Coder | Self::Critic | Self::Browser
         )
     }
 }

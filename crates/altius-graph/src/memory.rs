@@ -120,13 +120,24 @@ impl MemoryStore for InMemoryStore {
     }
 }
 
-/// Neo4j-backed [`MemoryStore`] stub (feature `neo4j`).
+/// Neo4j-backed [`MemoryStore`] (feature `neo4j`).
 ///
-/// Compiles against `neo4rs` 0.9 rc and wraps connection setup. Real Cypher
-/// persistence is intentionally TODO — Phase D owns the full schema.
+/// Persists workflow checkpoints as `(:Run)-[:HAS_CHECKPOINT]->(:Checkpoint)`
+/// and scratch key/value data as `(:KvEntry)` nodes, mirroring the semantics
+/// of [`InMemoryStore`]. Binary payloads are base64-encoded into string
+/// properties so they survive the Bolt type system unchanged. Checkpoints are
+/// append-only and ordered by a server-side `seq` (`timestamp()`), so
+/// [`latest_checkpoint`](MemoryStore::latest_checkpoint) returns the newest.
 #[cfg(feature = "neo4j")]
 pub struct Neo4jMemoryStore {
     graph: neo4rs::Graph,
+}
+
+#[cfg(feature = "neo4j")]
+impl From<neo4rs::Error> for MemoryError {
+    fn from(error: neo4rs::Error) -> Self {
+        MemoryError::Message(format!("neo4j: {error}"))
+    }
 }
 
 #[cfg(feature = "neo4j")]
@@ -146,7 +157,21 @@ impl Neo4jMemoryStore {
         Ok(Self { graph })
     }
 
-    /// Expose the underlying driver for Phase D schema work.
+    /// Apply idempotent constraints/indexes this store relies on. Safe to call
+    /// repeatedly; run once at startup.
+    pub async fn ensure_schema(&self) -> MemoryResult<()> {
+        for statement in [
+            "CREATE CONSTRAINT kv_entry_key IF NOT EXISTS \
+             FOR (k:KvEntry) REQUIRE (k.namespace, k.key) IS UNIQUE",
+            "CREATE INDEX checkpoint_seq IF NOT EXISTS \
+             FOR (c:Checkpoint) ON (c.seq)",
+        ] {
+            self.graph.run(neo4rs::query(statement)).await?;
+        }
+        Ok(())
+    }
+
+    /// Expose the underlying driver for adjacent schema work.
     pub fn graph(&self) -> &neo4rs::Graph {
         &self.graph
     }
@@ -162,32 +187,101 @@ impl MemoryStore for Neo4jMemoryStore {
         node: &str,
         payload: &[u8],
     ) -> MemoryResult<()> {
-        // Phase D: MERGE (:Run)-[:HAS_CHECKPOINT]->(:Checkpoint {…})
-        let _ = (&self.graph, run_id, step_id, node, payload);
-        Err(MemoryError::NotImplemented(
-            "Neo4jMemoryStore::put_checkpoint — schema lands in Phase D".into(),
-        ))
+        use base64::Engine as _;
+        let payload_b64 = base64::engine::general_purpose::STANDARD.encode(payload);
+        self.graph
+            .run(
+                neo4rs::query(
+                    "MERGE (r:Run {id: $run_id}) \
+                     CREATE (c:Checkpoint {id: randomUUID(), step_id: $step_id, node: $node, \
+                             payload: $payload, seq: timestamp()}) \
+                     CREATE (r)-[:HAS_CHECKPOINT]->(c)",
+                )
+                .param("run_id", run_id.to_string())
+                .param("step_id", step_id.to_string())
+                .param("node", node.to_owned())
+                .param("payload", payload_b64),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn latest_checkpoint(&self, run_id: &RunId) -> MemoryResult<Option<CheckpointRecord>> {
-        let _ = (&self.graph, run_id);
-        Err(MemoryError::NotImplemented(
-            "Neo4jMemoryStore::latest_checkpoint — schema lands in Phase D".into(),
-        ))
+        use base64::Engine as _;
+        let mut rows = self
+            .graph
+            .execute(
+                neo4rs::query(
+                    "MATCH (:Run {id: $run_id})-[:HAS_CHECKPOINT]->(c:Checkpoint) \
+                     RETURN c.step_id AS step_id, c.node AS node, c.payload AS payload \
+                     ORDER BY c.seq DESC LIMIT 1",
+                )
+                .param("run_id", run_id.to_string()),
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+        let step_id: String = row
+            .get("step_id")
+            .map_err(|e| MemoryError::message(e.to_string()))?;
+        let node: String = row
+            .get("node")
+            .map_err(|e| MemoryError::message(e.to_string()))?;
+        let payload_b64: String = row
+            .get("payload")
+            .map_err(|e| MemoryError::message(e.to_string()))?;
+        let payload = base64::engine::general_purpose::STANDARD
+            .decode(payload_b64.as_bytes())
+            .map_err(|e| MemoryError::message(format!("payload base64: {e}")))?;
+        let step_id = step_id
+            .parse::<uuid::Uuid>()
+            .map(StepId::from)
+            .map_err(|e| MemoryError::message(format!("step_id: {e}")))?;
+        Ok(Some(CheckpointRecord {
+            run_id: *run_id,
+            step_id,
+            node,
+            payload,
+        }))
     }
 
     async fn put_kv(&self, namespace: &str, key: &str, value: &[u8]) -> MemoryResult<()> {
-        let _ = (&self.graph, namespace, key, value);
-        Err(MemoryError::NotImplemented(
-            "Neo4jMemoryStore::put_kv — schema lands in Phase D".into(),
-        ))
+        use base64::Engine as _;
+        let value_b64 = base64::engine::general_purpose::STANDARD.encode(value);
+        self.graph
+            .run(
+                neo4rs::query("MERGE (k:KvEntry {namespace: $ns, key: $key}) SET k.value = $value")
+                    .param("ns", namespace.to_owned())
+                    .param("key", key.to_owned())
+                    .param("value", value_b64),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn get_kv(&self, namespace: &str, key: &str) -> MemoryResult<Option<Vec<u8>>> {
-        let _ = (&self.graph, namespace, key);
-        Err(MemoryError::NotImplemented(
-            "Neo4jMemoryStore::get_kv — schema lands in Phase D".into(),
-        ))
+        use base64::Engine as _;
+        let mut rows = self
+            .graph
+            .execute(
+                neo4rs::query(
+                    "MATCH (k:KvEntry {namespace: $ns, key: $key}) RETURN k.value AS value",
+                )
+                .param("ns", namespace.to_owned())
+                .param("key", key.to_owned()),
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+        let value_b64: String = row
+            .get("value")
+            .map_err(|e| MemoryError::message(e.to_string()))?;
+        let value = base64::engine::general_purpose::STANDARD
+            .decode(value_b64.as_bytes())
+            .map_err(|e| MemoryError::message(format!("value base64: {e}")))?;
+        Ok(Some(value))
     }
 }
 
