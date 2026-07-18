@@ -26,6 +26,7 @@ pub const NATIVE_SOL_MINT: &str = "So11111111111111111111111111111111111111112";
 
 const MAX_ACCEPTS: usize = 32;
 const MAX_FIELD_LEN: usize = 2_048;
+const MAX_CHALLENGE_BYTES: usize = 256 * 1024;
 
 /// One entry of the `accepts` array: a way the resource server is willing
 /// to be paid.
@@ -114,6 +115,11 @@ pub struct PaymentChallenge {
 impl PaymentChallenge {
     /// Parse and validate an HTTP 402 response body.
     pub fn parse(body: &str) -> PaymentResult<Self> {
+        if body.len() > MAX_CHALLENGE_BYTES {
+            return Err(PaymentError::InvalidChallenge(format!(
+                "body exceeds {MAX_CHALLENGE_BYTES} bytes"
+            )));
+        }
         let challenge: PaymentChallenge = serde_json::from_str(body)
             .map_err(|error| PaymentError::InvalidChallenge(error.to_string()))?;
         if challenge.x402_version != SUPPORTED_X402_VERSION {
@@ -172,6 +178,7 @@ pub fn network_cluster(network: &str) -> PaymentResult<Cluster> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn fixture(network: &str, asset: &str) -> String {
         format!(
@@ -262,5 +269,47 @@ mod tests {
             req.lamports(),
             Err(PaymentError::InvalidAmount(_))
         ));
+    }
+
+    #[test]
+    fn rejects_oversized_challenge_before_json_parsing() {
+        let body = " ".repeat(MAX_CHALLENGE_BYTES + 1);
+        assert!(matches!(
+            PaymentChallenge::parse(&body),
+            Err(PaymentError::InvalidChallenge(_))
+        ));
+    }
+
+    proptest! {
+        #[test]
+        fn decimal_lamport_amounts_round_trip(amount in any::<u64>()) {
+            let mut requirement = PaymentChallenge::parse(&fixture("solana-devnet", ""))
+                .unwrap()
+                .select_solana_requirement()
+                .unwrap()
+                .clone();
+            requirement.max_amount_required = amount.to_string();
+            prop_assert_eq!(requirement.lamports().unwrap(), amount);
+        }
+
+        #[test]
+        fn accepts_count_cap_is_enforced(extra in 1usize..32) {
+            let requirement = serde_json::json!({
+                "scheme": "exact",
+                "network": "solana-devnet",
+                "maxAmountRequired": "1",
+                "resource": "https://example.invalid",
+                "payTo": "7VHUFJHWu2CuExkJcJrzhQPJ2oygupTWkL2A2For4BmE"
+            });
+            let body = serde_json::json!({
+                "x402Version": 1,
+                "accepts": vec![requirement; MAX_ACCEPTS + extra]
+            })
+            .to_string();
+            prop_assert!(matches!(
+                PaymentChallenge::parse(&body),
+                Err(PaymentError::InvalidChallenge(_))
+            ));
+        }
     }
 }

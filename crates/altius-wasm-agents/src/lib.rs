@@ -229,10 +229,36 @@ impl WasmAgentHost {
     }
 }
 
+/// Decode the packed guest ABI result and copy the referenced output.
+///
+/// This is public only so the ABI boundary can be fuzzed without starting a
+/// Wasmtime engine. Callers should use [`WasmAgentHost::run_module`].
+#[doc(hidden)]
+pub fn decode_guest_output(memory: &[u8], packed: i64) -> WasmAgentResult<Vec<u8>> {
+    let packed = packed as u64;
+    let out_ptr = (packed >> 32) as usize;
+    let out_len = (packed & 0xffff_ffff) as usize;
+    if out_len > MAX_MODULE_BYTES {
+        return Err(WasmAgentError::Execution(format!(
+            "output is {out_len} bytes; cap is {MAX_MODULE_BYTES}"
+        )));
+    }
+    let end = out_ptr
+        .checked_add(out_len)
+        .ok_or_else(|| WasmAgentError::Execution("output slice overflows".into()))?;
+    let output = memory.get(out_ptr..end).ok_or_else(|| {
+        WasmAgentError::Execution("output slice out of bounds of guest memory".into())
+    })?;
+    Ok(output.to_vec())
+}
+
 /// Fuel- and memory-metered execution backend (feature `wasmtime`).
 #[cfg(feature = "wasmtime")]
 mod runtime {
-    use super::{Capabilities, WasmAgentError, WasmAgentModule, WasmAgentResult, MAX_MODULE_BYTES};
+    use super::{
+        decode_guest_output, Capabilities, WasmAgentError, WasmAgentModule, WasmAgentResult,
+        MAX_MODULE_BYTES,
+    };
     use wasmtime::{Config, Engine, Instance, Module, Store, StoreLimits, StoreLimitsBuilder};
 
     struct HostState {
@@ -293,23 +319,7 @@ mod runtime {
         let packed = run
             .call(&mut store, (in_ptr, in_len))
             .map_err(|e| map_trap("run", e))?;
-        let out_ptr = ((packed >> 32) & 0xffff_ffff) as usize;
-        let out_len = (packed & 0xffff_ffff) as usize;
-        if out_len > MAX_MODULE_BYTES {
-            return Err(WasmAgentError::Execution(format!(
-                "output is {out_len} bytes; cap is {MAX_MODULE_BYTES}"
-            )));
-        }
-        let data = memory.data(&store);
-        let end = out_ptr
-            .checked_add(out_len)
-            .ok_or_else(|| WasmAgentError::Execution("output slice overflows".into()))?;
-        if end > data.len() {
-            return Err(WasmAgentError::Execution(
-                "output slice out of bounds of guest memory".into(),
-            ));
-        }
-        Ok(data[out_ptr..end].to_vec())
+        decode_guest_output(memory.data(&store), packed)
     }
 
     /// Clamp the capability memory cap into `usize` for the resource limiter.
@@ -384,6 +394,16 @@ mod tests {
             host.run_module("idle", b""),
             Err(WasmAgentError::CapabilityDenied { .. })
         ));
+    }
+
+    #[test]
+    fn guest_output_decoder_checks_bounds() {
+        let memory = b"abcdefgh";
+        let packed = ((2_u64 << 32) | 3) as i64;
+        assert_eq!(decode_guest_output(memory, packed).unwrap(), b"cde");
+
+        let out_of_bounds = ((7_u64 << 32) | 2) as i64;
+        assert!(decode_guest_output(memory, out_of_bounds).is_err());
     }
 
     #[cfg(not(feature = "wasmtime"))]

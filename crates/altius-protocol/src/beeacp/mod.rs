@@ -11,12 +11,16 @@
 //!
 //! [Agent Communication Protocol]: https://agentcommunicationprotocol.dev
 
+mod auth;
 mod model;
 mod routes;
+mod sqlite_store;
 mod store;
 
+pub use auth::BearerAuth;
 pub use model::{Message, MessagePart, Run, RunStatus};
 pub use routes::{
     router, BeeAcpState, CreateRunRequest, NoopExecutor, ResumeRunRequest, RunExecutor, RunOutcome,
 };
+pub use sqlite_store::SqliteRunStore;
 pub use store::{InMemoryRunStore, RunStore};

@@ -1,21 +1,26 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use altius_agents::{
-    run_supervisor_outcome_for, BrowserTooling, LlmClient, McpTools, OfflineLlmClient,
-    OpenAiCompatibleClient, SupervisorOptions, SupervisorOutcome,
+    build_supervisor_graph_with, run_supervisor_outcome_with_options, BrowserTooling, FleetState,
+    LlmClient, McpTools, OfflineLlmClient, OpenAiCompatibleClient, SupervisorOptions,
+    SupervisorOutcome,
 };
+use altius_core::{Budget, RunId};
+use altius_graph::{Checkpointer, ExecutionOutcome, GraphExecutor, InMemoryCheckpointer};
 use altius_mcp::{McpAttachConfig, McpAttachments};
 use altius_protocol::a2a::{A2aState, AgentCapabilities, AgentCard, AgentSkill, EchoTaskHandler};
 use altius_protocol::anp::{
     AgentDescription, AgentRegistry, AnpState, InMemoryRegistry, InterfaceDescription,
 };
 use altius_protocol::beeacp::{
-    BeeAcpState, InMemoryRunStore, Message, MessagePart, Run, RunExecutor, RunOutcome,
+    BeeAcpState, Message, MessagePart, Run, RunExecutor, RunOutcome, SqliteRunStore,
 };
 use altius_protocol::Result as ProtocolResult;
 use async_trait::async_trait;
 use axum::Router;
+use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::cli::FleetServeArgs;
@@ -24,37 +29,153 @@ use crate::error::CliError;
 /// Bridges the BeeAI ACP run lifecycle onto the fleet supervisor.
 ///
 /// A supervisor HITL interrupt maps to `RunOutcome::Awaiting`, pausing the
-/// BeeAI run. `resume` currently re-runs the supervisor with the original
-/// prompt plus the resume message; true resume-from-checkpoint wiring is
-/// future work.
+/// BeeAI run. Graph checkpoints are held in a process-lifetime
+/// [`InMemoryCheckpointer`] shared across execute/resume, with a map from
+/// BeeAI run id to graph run id: `resume` re-enters the interrupted node
+/// from its latest checkpoint (with the human reply appended to the state
+/// prompt). BeeAI ACP runs themselves persist in SQLite, but graph
+/// checkpoints are in-memory for this slice, so after a process restart —
+/// or if no checkpoint exists — `resume` falls back to a full re-run with
+/// the resume message appended to the original prompt.
 struct FleetRunExecutor {
     offline: bool,
     options_template: SupervisorOptions,
+    checkpointer: Arc<InMemoryCheckpointer<FleetState>>,
+    /// BeeAI ACP run id → graph run id, for checkpoint lookups on resume.
+    graph_runs: Arc<RwLock<HashMap<RunId, RunId>>>,
+}
+
+impl FleetRunExecutor {
+    fn new(offline: bool, options_template: SupervisorOptions) -> Self {
+        Self {
+            offline,
+            options_template,
+            checkpointer: Arc::new(InMemoryCheckpointer::new()),
+            graph_runs: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// One full supervisor pass, recording the graph run id so a later
+    /// `awaiting` can be resumed from its checkpoint.
+    async fn run_fleet(
+        &self,
+        bee_run_id: RunId,
+        prompt: String,
+        options: SupervisorOptions,
+    ) -> ProtocolResult<RunOutcome> {
+        let llm = llm_client(self.offline)?;
+        let checkpointer: Arc<dyn Checkpointer<FleetState>> =
+            Arc::clone(&self.checkpointer) as Arc<dyn Checkpointer<FleetState>>;
+        match run_supervisor_outcome_with_options(llm, checkpointer, fleet_budget(), prompt, options)
+            .await
+        {
+            Ok((graph_run_id, outcome)) => {
+                self.graph_runs.write().await.insert(bee_run_id, graph_run_id);
+                Ok(supervisor_outcome_to_run_outcome(outcome))
+            }
+            Err(error) => Ok(RunOutcome::Failed(error.to_string())),
+        }
+    }
+
+    /// Resume the paused graph from its latest checkpoint, if we have one.
+    /// Returns `None` when no checkpoint is available (e.g. after restart).
+    async fn try_resume_from_checkpoint(
+        &self,
+        run: &Run,
+        message: Option<&Message>,
+    ) -> ProtocolResult<Option<RunOutcome>> {
+        let graph_run_id = self.graph_runs.read().await.get(&run.run_id).copied();
+        let Some(graph_run_id) = graph_run_id else {
+            return Ok(None);
+        };
+        let checkpointer: Arc<dyn Checkpointer<FleetState>> =
+            Arc::clone(&self.checkpointer) as Arc<dyn Checkpointer<FleetState>>;
+        let Ok(Some(checkpoint)) = checkpointer.latest(&graph_run_id).await else {
+            return Ok(None);
+        };
+
+        let options = options_for_run(&self.options_template, &run.agent_name);
+        let llm = llm_client(self.offline)?;
+        let graph = match build_supervisor_graph_with(llm, &options) {
+            Ok(graph) => Arc::new(graph),
+            Err(error) => return Ok(Some(RunOutcome::Failed(error.to_string()))),
+        };
+        let executor = GraphExecutor::new(graph, checkpointer, fleet_budget());
+
+        let mut state = checkpoint.state;
+        if let Some(message) = message {
+            let reply = flatten_messages(std::slice::from_ref(message));
+            if !reply.is_empty() {
+                state.prompt.push_str("\n\n[human response]\n");
+                state.prompt.push_str(&reply);
+            }
+        }
+        // Re-enter the node that interrupted, with the reply in state.
+        match executor
+            .resume(graph_run_id, checkpoint.node, state, 0)
+            .await
+        {
+            Ok(ExecutionOutcome::Finished { state, .. }) => {
+                Ok(Some(completed_outcome(state)))
+            }
+            Ok(ExecutionOutcome::Interrupted { .. }) => Ok(Some(RunOutcome::Awaiting)),
+            Err(error) => Ok(Some(RunOutcome::Failed(error.to_string()))),
+        }
+    }
 }
 
 #[async_trait]
 impl RunExecutor for FleetRunExecutor {
     async fn execute(&self, run: &Run) -> ProtocolResult<RunOutcome> {
-        execute_prompt(
-            self.offline,
-            &flatten_messages(&run.input),
+        self.run_fleet(
+            run.run_id,
+            flatten_messages(&run.input),
             options_for_run(&self.options_template, &run.agent_name),
         )
         .await
     }
 
     async fn resume(&self, run: &Run, message: Option<Message>) -> ProtocolResult<RunOutcome> {
+        if let Some(outcome) = self
+            .try_resume_from_checkpoint(run, message.as_ref())
+            .await?
+        {
+            return Ok(outcome);
+        }
+
+        // Fallback (no checkpoint, e.g. after a restart): full re-run with
+        // the resume message appended to the original prompt.
         let mut prompt = flatten_messages(&run.input);
         if let Some(message) = message.as_ref() {
             prompt.push('\n');
             prompt.push_str(&flatten_messages(std::slice::from_ref(message)));
         }
-        execute_prompt(
-            self.offline,
-            &prompt,
+        self.run_fleet(
+            run.run_id,
+            prompt,
             options_for_run(&self.options_template, &run.agent_name),
         )
         .await
+    }
+}
+
+/// Same shape as the supervisor's internal default budget.
+fn fleet_budget() -> Budget {
+    Budget::unlimited().with_max_steps(32).with_max_parallel(4)
+}
+
+fn completed_outcome(state: FleetState) -> RunOutcome {
+    let answer = state
+        .final_answer
+        .unwrap_or_else(|| "(no final answer)".into());
+    RunOutcome::Completed(vec![agent_text(answer)])
+}
+
+fn supervisor_outcome_to_run_outcome(outcome: SupervisorOutcome) -> RunOutcome {
+    match outcome {
+        SupervisorOutcome::Finished(state) => completed_outcome(state),
+        // Graph `Interrupted` surfaces as awaiting, never as a failure.
+        SupervisorOutcome::Awaiting { .. } => RunOutcome::Awaiting,
     }
 }
 
@@ -63,24 +184,6 @@ fn options_for_run(template: &SupervisorOptions, agent_name: &str) -> Supervisor
         agent_name: Some(agent_name.to_owned()),
         browser: template.browser.clone(),
         hooks: template.hooks.clone(),
-    }
-}
-
-async fn execute_prompt(
-    offline: bool,
-    prompt: &str,
-    options: SupervisorOptions,
-) -> ProtocolResult<RunOutcome> {
-    let llm = llm_client(offline)?;
-    match run_supervisor_outcome_for(llm, prompt.to_owned(), options).await {
-        Ok((_run_id, SupervisorOutcome::Finished(state))) => {
-            let answer = state
-                .final_answer
-                .unwrap_or_else(|| "(no final answer)".into());
-            Ok(RunOutcome::Completed(vec![agent_text(answer)]))
-        }
-        Ok((_run_id, SupervisorOutcome::Awaiting { .. })) => Ok(RunOutcome::Awaiting),
-        Err(error) => Ok(RunOutcome::Failed(error.to_string())),
     }
 }
 
@@ -236,6 +339,14 @@ fn pwa_assets_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/pwa")
 }
 
+/// `~/.altius/runs.db`, or `.altius/runs.db` under the cwd without a home.
+fn default_run_db_path() -> PathBuf {
+    match std::env::var_os("HOME").filter(|home| !home.is_empty()) {
+        Some(home) => PathBuf::from(home).join(".altius").join("runs.db"),
+        None => PathBuf::from(".altius").join("runs.db"),
+    }
+}
+
 /// Serve BeeAI ACP + A2A surfaces on one HTTP listener.
 pub fn run_serve_cmd(args: &FleetServeArgs) -> Result<(), CliError> {
     serve_protocols(args, true)
@@ -259,12 +370,19 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
     let public_url = args.public_url.clone();
     let offline = args.offline;
     let local_did = format!("did:wba:{}%3A{}:agent:altius", bind.ip(), bind.port());
+    let auth_token = args
+        .token
+        .clone()
+        .filter(|token| !token.trim().is_empty());
+    let run_db_path = args.run_db.clone().unwrap_or_else(default_run_db_path);
     let serve_args = FleetServeArgs {
         bind: args.bind.clone(),
         public_url: args.public_url.clone(),
         offline: args.offline,
         browser_mcp_cmd: args.browser_mcp_cmd.clone(),
         browser_mcp_args: args.browser_mcp_args.clone(),
+        token: args.token.clone(),
+        run_db: args.run_db.clone(),
     };
 
     rt.block_on(async move {
@@ -303,13 +421,19 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
         let pwa = ServeDir::new(&pwa_dir).not_found_service(ServeFile::new(index));
 
         let app = if include_beeacp {
-            let bee = altius_protocol::beeacp::router(BeeAcpState::new(
-                Arc::new(InMemoryRunStore::new()),
-                Arc::new(FleetRunExecutor {
-                    offline,
-                    options_template,
-                }),
-            ));
+            let store = SqliteRunStore::open(&run_db_path).map_err(|error| {
+                CliError::message(format!(
+                    "open run db `{}`: {error}",
+                    run_db_path.display()
+                ))
+            })?;
+            let bee = altius_protocol::beeacp::router(
+                BeeAcpState::new(
+                    Arc::new(store),
+                    Arc::new(FleetRunExecutor::new(offline, options_template)),
+                )
+                .with_auth_token(auth_token.clone()),
+            );
             Router::new()
                 .merge(bee)
                 .merge(a2a)
@@ -327,7 +451,13 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
             .map_err(|error| CliError::message(error.to_string()))?;
         eprintln!("altius: listening on http://{bind}");
         if include_beeacp {
-            eprintln!("altius: BeeAI ACP runs at /runs");
+            eprintln!("altius: BeeAI ACP runs at /runs (SSE at /runs/{{id}}/events)");
+            eprintln!("altius: run db at {}", run_db_path.display());
+            if auth_token.is_some() {
+                eprintln!("altius: bearer auth ENABLED (send Authorization: Bearer <token> or ?token=)");
+            } else {
+                eprintln!("altius: bearer auth disabled (set --token or ALTIUS_FLEET_TOKEN)");
+            }
         }
         eprintln!("altius: A2A agent card at /.well-known/agent-card.json");
         eprintln!("altius: ANP discovery stub at /anp/agents");

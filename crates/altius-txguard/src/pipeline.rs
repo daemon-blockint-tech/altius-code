@@ -2,6 +2,7 @@ use altius_signer::SignerClient;
 use solana_pubkey::Pubkey;
 use solana_signature::Signature;
 use solana_transaction::Transaction as SolanaTransaction;
+use tracing::{info, info_span, warn};
 
 use crate::approval::{ApprovalChannel, ApprovalDecision};
 use crate::audit_log::{AuditEntry, AuditLogger};
@@ -64,13 +65,29 @@ impl<Sim: Simulator, App: ApprovalChannel> TxGuard<Sim, App> {
     /// exactly one audit entry, whether the outcome is a rejection, a
     /// denial, or a signed transaction — see Phase 0 spec §6 stage 5.
     pub fn submit(&mut self, tx: TxRequest) -> Result<TxOutcome, GuardError> {
+        let tx_kind = tx.kind.name();
+        let cluster = tx.cluster.to_string();
+        let span = info_span!(
+            "txguard.submit",
+            tx.kind = %tx_kind,
+            tx.cluster = %cluster,
+            signer_configured = self.signer.is_some(),
+        );
+        let _entered = span.enter();
+
         // Stage 1: policy.
+        info!(stage = "policy", "evaluating transaction policy");
         let policy_decision = self.policy.evaluate(&tx);
         if let PolicyDecision::Reject(reason) = &policy_decision {
+            warn!(
+                stage = "policy",
+                outcome = "rejected",
+                "transaction rejected before simulation"
+            );
             self.audit.append(AuditEntry::new(
                 tx.description.clone(),
-                tx.cluster.to_string(),
-                tx.kind.name(),
+                cluster,
+                tx_kind,
                 format!("Reject: {reason}"),
                 None,
                 "rejected before simulation".to_string(),
@@ -82,16 +99,32 @@ impl<Sim: Simulator, App: ApprovalChannel> TxGuard<Sim, App> {
 
         // Stage 2: simulation is mandatory — there is no branch that
         // skips this call.
-        let simulation = self.simulator.simulate(&tx)?;
+        info!(stage = "simulation", "starting mandatory simulation");
+        let simulation = match self.simulator.simulate(&tx) {
+            Ok(simulation) => simulation,
+            Err(error) => {
+                warn!(
+                    stage = "simulation",
+                    outcome = "error",
+                    "transaction simulation could not complete"
+                );
+                return Err(error);
+            }
+        };
         if !simulation.success {
             let reason = simulation
                 .error
                 .clone()
                 .unwrap_or_else(|| "simulation reported failure with no error message".to_string());
+            warn!(
+                stage = "simulation",
+                outcome = "failed",
+                "transaction simulation rejected the request"
+            );
             self.audit.append(AuditEntry::new(
                 tx.description.clone(),
-                tx.cluster.to_string(),
-                tx.kind.name(),
+                cluster,
+                tx_kind,
                 format!("{policy_decision:?}"),
                 Some(false),
                 format!("rejected: simulation failed: {reason}"),
@@ -101,9 +134,14 @@ impl<Sim: Simulator, App: ApprovalChannel> TxGuard<Sim, App> {
         }
 
         // Stage 3: diff report, built from the simulation output only.
+        info!(stage = "diff", "building simulation diff");
         let diff = DiffReport::from_simulation(&simulation);
 
         // Stage 4: approval.
+        info!(
+            stage = "approval",
+            requires_manual, "requesting transaction approval"
+        );
         let decision = self
             .approval
             .request_approval(&tx, &diff, requires_manual)?;
@@ -116,6 +154,7 @@ impl<Sim: Simulator, App: ApprovalChannel> TxGuard<Sim, App> {
         let signed_transaction = if approved {
             match &self.signer {
                 Some(signer) => {
+                    info!(stage = "sign", "requesting isolated signer operation");
                     let wallet_pubkey = signer.pubkey()?;
                     let wallet_signature = signer.sign(&tx.message.serialize())?;
                     let transaction = assemble_signed_transaction(
@@ -125,18 +164,23 @@ impl<Sim: Simulator, App: ApprovalChannel> TxGuard<Sim, App> {
                     )?;
                     Some(transaction)
                 }
-                None => None,
+                None => {
+                    info!(stage = "sign", outcome = "skipped", "no signer configured");
+                    None
+                }
             }
         } else {
+            warn!(stage = "approval", outcome = "denied", "approval denied");
             None
         };
 
         // Stage 5: audit log — always written, before returning either
         // outcome.
+        info!(stage = "audit", "appending transaction audit entry");
         self.audit.append(AuditEntry::new(
             tx.description.clone(),
-            tx.cluster.to_string(),
-            tx.kind.name(),
+            cluster,
+            tx_kind,
             format!("{policy_decision:?}"),
             Some(true),
             approval_summary.clone(),
@@ -150,6 +194,14 @@ impl<Sim: Simulator, App: ApprovalChannel> TxGuard<Sim, App> {
             return Err(GuardError::ApprovalDenied(approval_summary));
         }
 
+        info!(
+            outcome = if signed_transaction.is_some() {
+                "signed"
+            } else {
+                "approved_without_signer"
+            },
+            "transaction guard pipeline completed"
+        );
         Ok(match signed_transaction {
             Some(transaction) => TxOutcome::Signed { transaction },
             None => TxOutcome::ApprovedNoSigner,

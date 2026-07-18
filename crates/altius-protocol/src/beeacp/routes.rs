@@ -1,17 +1,26 @@
+use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
 use altius_core::RunId;
 use async_trait::async_trait;
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::StatusCode;
+use axum::middleware;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 
+use super::auth::{require_bearer, BearerAuth};
 use super::model::{Message, Run, RunStatus};
 use super::store::RunStore;
 use crate::error::{ProtocolError, Result};
 use crate::limits;
+
+/// How often the SSE endpoint re-reads the store looking for changes.
+const SSE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// What an executor produced for one execution (or resumption) step.
 #[derive(Debug)]
@@ -60,11 +69,24 @@ impl RunExecutor for NoopExecutor {
 pub struct BeeAcpState {
     pub store: Arc<dyn RunStore>,
     pub executor: Arc<dyn RunExecutor>,
+    /// Bearer token required on every route when set (see [`BearerAuth`]).
+    /// `None` / empty keeps the surface open, e.g. for offline demos.
+    pub auth_token: Option<String>,
 }
 
 impl BeeAcpState {
     pub fn new(store: Arc<dyn RunStore>, executor: Arc<dyn RunExecutor>) -> Self {
-        Self { store, executor }
+        Self {
+            store,
+            executor,
+            auth_token: None,
+        }
+    }
+
+    /// Require `Authorization: Bearer <token>` (or `?token=`) on all routes.
+    pub fn with_auth_token(mut self, token: Option<String>) -> Self {
+        self.auth_token = token;
+        self
     }
 }
 
@@ -98,6 +120,7 @@ pub struct ResumeRunRequest {
 
 /// Build the BeeAI ACP run-lifecycle router.
 pub fn router(state: BeeAcpState) -> Router {
+    let auth = BearerAuth::new(state.auth_token.clone());
     Router::new()
         .route("/runs", get(list_runs).post(create_run))
         .route("/runs/{id}", get(get_run).post(resume_run))
@@ -105,7 +128,9 @@ pub fn router(state: BeeAcpState) -> Router {
         // Compatibility alias for early Altius clients. ACP's canonical
         // resume endpoint is POST /runs/{id}.
         .route("/runs/{id}/resume", post(resume_run))
+        .route("/runs/{id}/events", get(run_events))
         .layer(DefaultBodyLimit::max(limits::MAX_BODY_BYTES))
+        .layer(middleware::from_fn_with_state(auth, require_bearer))
         .with_state(state)
 }
 
@@ -224,6 +249,71 @@ async fn resume_run(
         settle_run(&task_state, run_id, outcome).await;
     });
     Ok((StatusCode::ACCEPTED, Json(resumed)))
+}
+
+/// `GET /runs/{id}/events` — server-sent run updates.
+///
+/// Polls the store every [`SSE_POLL_INTERVAL`] and emits an `event: run`
+/// frame whenever the run's serialized form changes (status, output, error).
+/// The first frame is sent immediately; the stream closes after the frame
+/// that carries a terminal status. Axum's keep-alive sends comment pings so
+/// idle proxies do not drop the connection while a run is in flight.
+async fn run_events(
+    State(state): State<BeeAcpState>,
+    Path(id): Path<String>,
+) -> Result<Sse<impl Stream<Item = std::result::Result<Event, Infallible>>>> {
+    let run_id = parse_run_id(&id)?;
+    // Fail fast with a proper 404 before committing to a stream response.
+    state.store.get(run_id).await?;
+
+    let stream = futures::stream::unfold(
+        RunEventStream {
+            store: Arc::clone(&state.store),
+            run_id,
+            last_payload: None,
+            finished: false,
+        },
+        |mut ctx| async move {
+            if ctx.finished {
+                return None;
+            }
+            loop {
+                let run = match ctx.store.get(ctx.run_id).await {
+                    Ok(run) => run,
+                    // Run vanished (or store failed): end the stream.
+                    Err(_) => return None,
+                };
+                let terminal = run.status.is_terminal();
+                let payload = match serde_json::to_string(&run) {
+                    Ok(payload) => payload,
+                    Err(_) => return None,
+                };
+                if ctx.last_payload.as_deref() != Some(payload.as_str()) {
+                    ctx.last_payload = Some(payload.clone());
+                    ctx.finished = terminal;
+                    let event = Event::default().event("run").data(payload);
+                    return Some((Ok(event), ctx));
+                }
+                if terminal {
+                    return None;
+                }
+                tokio::time::sleep(SSE_POLL_INTERVAL).await;
+            }
+        },
+    );
+
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(5))
+            .text("ping"),
+    ))
+}
+
+struct RunEventStream {
+    store: Arc<dyn RunStore>,
+    run_id: RunId,
+    last_payload: Option<String>,
+    finished: bool,
 }
 
 #[cfg(test)]
@@ -401,6 +491,107 @@ mod tests {
         let (status, body) = send(&app, post_json(&format!("/runs/{id}/cancel"), json!({}))).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["error"]["code"], "invalid_transition");
+    }
+
+    #[tokio::test]
+    async fn auth_token_gates_all_routes() {
+        let app = router(
+            BeeAcpState::new(Arc::new(InMemoryRunStore::new()), Arc::new(NoopExecutor))
+                .with_auth_token(Some("s3cret".into())),
+        );
+
+        // Unauthenticated POST is rejected with the protocol error shape.
+        let (status, body) = send(&app, post_json("/runs", create_body())).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"]["code"], "unauthorized");
+
+        // Wrong bearer is rejected too.
+        let request = Request::post("/runs")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, "Bearer nope")
+            .body(Body::from(create_body().to_string()))
+            .unwrap();
+        let (status, _) = send(&app, request).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        // Correct bearer succeeds.
+        let request = Request::post("/runs")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, "Bearer s3cret")
+            .body(Body::from(create_body().to_string()))
+            .unwrap();
+        let (status, created) = send(&app, request).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+
+        // Query-string token works for header-less clients (EventSource).
+        let id = created["run_id"].as_str().unwrap();
+        let (status, _) = send(
+            &app,
+            Request::get(format!("/runs/{id}?token=s3cret"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn empty_auth_token_disables_auth() {
+        let app = router(
+            BeeAcpState::new(Arc::new(InMemoryRunStore::new()), Arc::new(NoopExecutor))
+                .with_auth_token(Some(String::new())),
+        );
+        let (status, _) = send(&app, post_json("/runs", create_body())).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn events_stream_emits_run_and_closes_on_terminal() {
+        let app = app(Arc::new(NoopExecutor));
+        let (_, created) = send(&app, post_json("/runs", create_body())).await;
+        let id = created["run_id"].as_str().unwrap().to_owned();
+        wait_for_status(&app, &id, "completed").await;
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/runs/{id}/events"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/event-stream")
+        );
+        // The run is terminal, so the stream emits one frame and closes;
+        // reading the body to completion must therefore terminate.
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(text.contains("event: run"), "missing run event: {text}");
+        assert!(text.contains("\"completed\""), "missing status: {text}");
+    }
+
+    #[tokio::test]
+    async fn events_for_unknown_run_is_404() {
+        let app = app(Arc::new(NoopExecutor));
+        let missing = RunId::new();
+        let (status, body) = send(
+            &app,
+            Request::get(format!("/runs/{missing}/events"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"]["code"], "not_found");
     }
 
     #[tokio::test]

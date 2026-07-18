@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 
+use tracing::{debug, error, info, info_span};
+
 use crate::backend::Signer;
 use crate::error::SignerError;
 use crate::protocol::{Request, Response};
@@ -35,13 +37,17 @@ impl<S: Signer + 'static> SignerServer<S> {
             std::fs::remove_file(&self.socket_path)?;
         }
         let listener = UnixListener::bind(&self.socket_path)?;
+        info!("signer IPC server listening");
         for stream in listener.incoming() {
             let stream = stream?;
             let backend = Arc::clone(&self.backend);
             thread::spawn(move || {
+                let span = info_span!("signer.connection");
+                let _entered = span.enter();
+                debug!("accepted signer IPC connection");
                 if let Err(err) = handle_connection(stream, backend.as_ref()) {
                     if !matches!(err, SignerError::ConnectionClosed) {
-                        eprintln!("altius-signerd: connection error: {err}");
+                        error!(error = %err, "signer IPC connection failed");
                     }
                 }
             });
@@ -61,8 +67,24 @@ fn handle_connection<S: Signer>(mut stream: UnixStream, backend: &S) -> Result<(
             Err(SignerError::ConnectionClosed) => return Ok(()),
             Err(e) => return Err(e),
         };
+        let (operation, message_len) = request_metadata(&request);
+        let span = info_span!(
+            "signer.request",
+            operation,
+            message_len = message_len.unwrap_or_default(),
+        );
+        let _entered = span.enter();
+        debug!("dispatching signer request");
         let response = dispatch(&request, backend);
         write_message(&mut stream, &response)?;
+        debug!("completed signer request");
+    }
+}
+
+fn request_metadata(request: &Request) -> (&'static str, Option<usize>) {
+    match request {
+        Request::Pubkey => ("pubkey", None),
+        Request::Sign { message } => ("sign", Some(message.len())),
     }
 }
 

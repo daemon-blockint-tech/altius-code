@@ -22,6 +22,10 @@ pub enum ProtocolError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// Missing or invalid bearer credentials.
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
+
     /// Cryptographic verification is not implemented yet; we fail closed
     /// rather than accepting unverified remote identities.
     #[error("verification unavailable (fail closed): {0}")]
@@ -54,6 +58,7 @@ impl ProtocolError {
             Self::NotFound { .. } => "not_found",
             Self::InvalidTransition { .. } => "invalid_transition",
             Self::Conflict(_) => "conflict",
+            Self::Unauthorized(_) => "unauthorized",
             Self::VerificationUnavailable(_) => "verification_unavailable",
             Self::Internal(_) => "internal_error",
         }
@@ -64,6 +69,7 @@ impl ProtocolError {
             Self::Validation { .. } => StatusCode::BAD_REQUEST,
             Self::NotFound { .. } => StatusCode::NOT_FOUND,
             Self::InvalidTransition { .. } | Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             // Fail closed: an unverifiable identity is a refusal, not a bug.
             Self::VerificationUnavailable(_) => StatusCode::FORBIDDEN,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,

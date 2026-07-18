@@ -11,34 +11,38 @@
 use std::path::PathBuf;
 
 use altius_signer::{KeypairFileSigner, Signer, SignerServer};
+use tracing::{error, info};
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
     let keypair_path = require_env("ALTIUS_SIGNER_KEYPAIR");
     let socket_path = PathBuf::from(require_env("ALTIUS_SIGNER_SOCKET"));
 
     let signer = match KeypairFileSigner::load(&keypair_path) {
         Ok(signer) => signer,
         Err(err) => {
-            eprintln!("altius-signerd: failed to load keypair: {err}");
+            error!(error = %err, "failed to load signer keypair");
             std::process::exit(1);
         }
     };
-    println!(
-        "altius-signerd: serving pubkey {} on {}",
-        signer.pubkey(),
-        socket_path.display()
-    );
+    info!(pubkey = %signer.pubkey(), "starting isolated signer daemon");
 
     let server = SignerServer::new(socket_path, signer);
     if let Err(err) = server.run() {
-        eprintln!("altius-signerd: server error: {err}");
+        error!(error = %err, "signer server stopped with an error");
         std::process::exit(1);
     }
 }
 
 fn require_env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| {
-        eprintln!("altius-signerd: missing required environment variable {name}");
+        error!(variable = name, "missing required environment variable");
         std::process::exit(2);
     })
 }

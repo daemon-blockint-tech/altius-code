@@ -53,3 +53,5 @@ base64 = "0.22"
 url = "2"
 rmcp = { version = "2.2", default-features = false, features = ["server", "client", "transport-io"] }
 wasmtime = "29"
+rusqlite = { version = "0.40", features = ["bundled"] }
+proptest = "1"

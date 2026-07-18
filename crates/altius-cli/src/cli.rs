@@ -126,6 +126,18 @@ pub struct FleetServeArgs {
     /// `ALTIUS_BROWSER_MCP_ARGS` when set.
     #[arg(long)]
     pub browser_mcp_args: Option<String>,
+
+    /// Bearer token required on the BeeAI ACP surface. Clients send
+    /// `Authorization: Bearer <token>` or `?token=` (EventSource). Unset or
+    /// empty leaves the surface open for offline demos.
+    #[arg(long, env = "ALTIUS_FLEET_TOKEN")]
+    pub token: Option<String>,
+
+    /// SQLite file persisting BeeAI ACP runs. Defaults to
+    /// `~/.altius/runs.db` (or `.altius/runs.db` under the cwd when no home
+    /// directory is available).
+    #[arg(long, env = "ALTIUS_FLEET_RUN_DB")]
+    pub run_db: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]

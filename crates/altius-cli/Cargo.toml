@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 altius-core = { workspace = true }
 altius-agents = { workspace = true }
+altius-graph = { workspace = true }
 altius-detect = { workspace = true }
 altius-eval = { workspace = true }
 altius-findings = { workspace = true }
@@ -25,7 +26,7 @@ altius-txguard = { workspace = true }
 altius-signer = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

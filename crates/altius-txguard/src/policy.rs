@@ -112,6 +112,7 @@ impl PolicyConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn tx(cluster: Cluster, kind: TxKind) -> TxRequest {
         TxRequest::new("test tx", cluster, kind, solana_message::Message::default())
@@ -212,5 +213,31 @@ mod tests {
             },
         );
         assert_eq!(policy.evaluate(&request), PolicyDecision::Continue);
+    }
+
+    proptest! {
+        #[test]
+        fn money_outflow_cap_is_exact(
+            cap in any::<u64>(),
+            lamports in any::<u64>(),
+            payment in any::<bool>(),
+        ) {
+            let policy = PolicyConfig {
+                max_lamports_out: cap,
+                deny_instructions: Vec::new(),
+                ..PolicyConfig::default()
+            };
+            let kind = if payment {
+                TxKind::Payment { lamports }
+            } else {
+                TxKind::Transfer { lamports }
+            };
+            let decision = policy.evaluate(&tx(Cluster::Devnet, kind));
+            if lamports > cap {
+                prop_assert!(matches!(decision, PolicyDecision::Reject(_)));
+            } else {
+                prop_assert_eq!(decision, PolicyDecision::Continue);
+            }
+        }
     }
 }

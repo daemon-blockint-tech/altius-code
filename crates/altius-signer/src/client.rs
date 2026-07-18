@@ -1,6 +1,8 @@
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
+use tracing::{debug, info_span};
+
 use crate::error::SignerError;
 use crate::keys::{Pubkey, Signature};
 use crate::protocol::{Request, Response};
@@ -42,9 +44,18 @@ impl SignerClient {
     }
 
     fn roundtrip(&self, request: Request) -> Result<Response, SignerError> {
+        let (operation, message_len) = match &request {
+            Request::Pubkey => ("pubkey", 0),
+            Request::Sign { message } => ("sign", message.len()),
+        };
+        let span = info_span!("signer.ipc", operation, message_len);
+        let _entered = span.enter();
+        debug!("opening signer IPC connection");
         let mut stream = UnixStream::connect(&self.socket_path)?;
         write_message(&mut stream, &request)?;
-        read_message(&mut stream)
+        let response = read_message(&mut stream)?;
+        debug!("signer IPC round trip completed");
+        Ok(response)
     }
 
     pub fn socket_path(&self) -> &Path {

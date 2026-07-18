@@ -24,8 +24,10 @@ solana-client = "4.1.2"
 solana-rpc-client = "4.1.2"
 solana-rpc-client-api = "4.1.2"
 tempfile = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 ed25519-dalek = "3.0.0"
+proptest = { workspace = true }
 rand = "0.10.2"
 rand_core = "0.10.1"
