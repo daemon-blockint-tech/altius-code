@@ -1,4 +1,4 @@
-/* Altius Fleet PWA thin client — vanilla JS, zero build. */
+/* Altius Fleet PWA thin client - vanilla JS, zero build. */
 (() => {
   const THEME_KEY = "altius-fleet-theme";
   const THEME_CYCLE = ["system", "light", "dark"];
@@ -81,6 +81,24 @@
       .join("\n");
   }
 
+  function relativeTime(value) {
+    if (!value) return "";
+    const then = new Date(value).getTime();
+    if (Number.isNaN(then)) return "";
+    const seconds = Math.round((Date.now() - then) / 1000);
+    if (seconds < 45) return "just now";
+    const units = [
+      ["d", 86400],
+      ["h", 3600],
+      ["m", 60],
+    ];
+    for (const [label, span] of units) {
+      const amount = Math.floor(seconds / span);
+      if (amount >= 1) return `${amount}${label} ago`;
+    }
+    return "just now";
+  }
+
   function badgeClass(status) {
     const knownStatus = [
       "created",
@@ -154,10 +172,12 @@
       btn.type = "button";
       btn.className = "list-row" + (run.run_id === selectedId ? " active" : "");
       const preview = flattenParts(run.input).slice(0, 80) || "(empty)";
+      const when = relativeTime(run.created_at);
       btn.innerHTML = `
         <div class="list-row-title">
           <span class="${badgeClass(run.status)}">${escapeHtml(run.status)}</span>
           <span>${escapeHtml(run.agent_name)}</span>
+          ${when ? `<span class="list-row-time">${escapeHtml(when)}</span>` : ""}
         </div>
         <div class="list-row-preview">${escapeHtml(preview)}</div>
         <div class="list-row-meta">${escapeHtml(run.run_id)}</div>`;
@@ -245,6 +265,7 @@
       return;
     }
     els.send.disabled = true;
+    els.send.textContent = "Sending…";
     showError("");
     try {
       const run = await api("/runs", {
@@ -264,6 +285,7 @@
       showError(err.message || String(err));
     } finally {
       els.send.disabled = false;
+      els.send.textContent = "Send";
     }
   }
 

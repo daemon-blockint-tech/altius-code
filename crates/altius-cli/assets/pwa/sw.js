@@ -1,6 +1,6 @@
 /* Minimal service worker so the thin client is installable as a PWA.
    Network-first for API; cache-first for static assets. */
-const CACHE = "altius-fleet-pwa-v2";
+const CACHE = "altius-fleet-pwa-v3";
 const ASSETS = [
   "./",
   "./index.html",

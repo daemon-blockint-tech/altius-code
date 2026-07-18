@@ -1,4 +1,4 @@
-/* Altius Fleet design system — semantic tokens + components. Zero-build. */
+/* Altius Fleet design system - semantic tokens + components. Zero-build. */
 
 :root {
   color-scheme: light;
@@ -13,7 +13,7 @@
   /* Text */
   --fg: #172033;
   --fg-quiet: #55637a;
-  --fg-quieter: #758197;
+  --fg-quieter: #616c7e;
   --fg-inverse: #ffffff;
   /* Borders */
   --border-subtlest: #e4e9f0;
@@ -179,7 +179,7 @@ textarea:focus-visible,
   border: 0;
 }
 
-/* ——— Buttons ——— */
+/* Buttons */
 
 .btn {
   display: inline-flex;
@@ -257,7 +257,7 @@ textarea:focus-visible,
   aspect-ratio: 1;
 }
 
-/* ——— Cards ——— */
+/* Cards */
 
 .card {
   border: 1px solid var(--border-subtlest);
@@ -271,7 +271,7 @@ textarea:focus-visible,
   background: var(--warn-soft);
 }
 
-/* ——— Badges ——— */
+/* Badges */
 
 .badge {
   display: inline-flex;
@@ -314,7 +314,7 @@ textarea:focus-visible,
   color: var(--bad);
 }
 
-/* ——— Composer ——— */
+/* Composer */
 
 .composer {
   padding: var(--size-md);
@@ -353,6 +353,12 @@ textarea:focus-visible,
   margin-top: var(--size-md);
 }
 
+.composer-hint {
+  margin: var(--size-sm) var(--size-xs) 0;
+  color: var(--fg-quieter);
+  font: var(--text-xs) / 1 var(--font-mono);
+}
+
 .agent-pills {
   display: flex;
   flex-wrap: wrap;
@@ -376,7 +382,7 @@ textarea:focus-visible,
   color: var(--fg);
 }
 
-/* ——— List rows ——— */
+/* List rows */
 
 .list-row {
   width: 100%;
@@ -406,6 +412,14 @@ textarea:focus-visible,
   align-items: center;
   gap: var(--size-sm);
   font-weight: var(--weight-semibold);
+}
+
+.list-row-time {
+  margin-left: auto;
+  color: var(--fg-quieter);
+  font: var(--text-xs) / 1 var(--font-mono);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
 }
 
 .list-row-preview {
@@ -440,7 +454,7 @@ textarea:focus-visible,
   font-size: var(--text-sm);
 }
 
-/* ——— Nav ——— */
+/* Nav */
 
 .nav-item {
   display: flex;
@@ -470,7 +484,7 @@ textarea:focus-visible,
   color: var(--fg);
 }
 
-/* ——— Inputs ——— */
+/* Inputs */
 
 .input {
   width: 100%;
@@ -495,7 +509,7 @@ textarea:focus-visible,
   color: var(--fg-quieter);
 }
 
-/* ——— App shell ——— */
+/* App shell */
 
 .app-shell {
   display: flex;
@@ -649,6 +663,21 @@ textarea:focus-visible,
   .sidebar-nav {
     grid-auto-flow: column;
     grid-auto-columns: 1fr;
+    gap: var(--size-xs);
+    padding: var(--size-xs);
+    background: var(--bg-quiet);
+    border-radius: var(--radius-full);
+  }
+
+  .sidebar-nav .nav-item {
+    min-height: 36px;
+    justify-content: center;
+    border-radius: var(--radius-full);
+  }
+
+  .sidebar-nav .nav-item.active {
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-card);
   }
 
   .sidebar-footer {
