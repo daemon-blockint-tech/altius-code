@@ -18,7 +18,10 @@ altius-svm-detect = { workspace = true }
 altius-svm-tools = { workspace = true }
 altius-txguard = { workspace = true }
 altius-signer = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

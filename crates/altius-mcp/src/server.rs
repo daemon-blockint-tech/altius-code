@@ -8,7 +8,9 @@ use altius_svm_detect::{detect, Framework, SvmProject};
 use altius_svm_tools::{AnchorToolchain, CargoBuildSbfToolchain, SvmToolchain};
 use axum::Router;
 use rmcp::{
-    handler::server::wrapper::Parameters, model::CallToolResult, schemars, tool, tool_router,
+    handler::server::wrapper::Parameters,
+    model::CallToolResult,
+    schemars, tool, tool_router,
     transport::{
         stdio,
         streamable_http_server::{
@@ -197,10 +199,7 @@ impl AltiusMcpServer {
     }
 
     #[tool(description = "Run unit or integration tests for an SVM project")]
-    async fn test_project(
-        &self,
-        Parameters(request): Parameters<TestRequest>,
-    ) -> CallToolResult {
+    async fn test_project(&self, Parameters(request): Parameters<TestRequest>) -> CallToolResult {
         let project = match self.resolve_project(&request.project) {
             Ok(project) => project,
             Err(error) => return tool_result::<TestOutput>(Err(error)),
@@ -308,9 +307,7 @@ pub async fn serve_http(
 fn toolchain_for(project: &SvmProject, root: &Path) -> Box<dyn SvmToolchain> {
     match project.framework {
         Framework::Anchor => Box::new(AnchorToolchain::new(root)),
-        Framework::Pinocchio | Framework::Native => {
-            Box::new(CargoBuildSbfToolchain::new(root))
-        }
+        Framework::Pinocchio | Framework::Native => Box::new(CargoBuildSbfToolchain::new(root)),
     }
 }
 
@@ -338,7 +335,10 @@ fn detection_output(project: SvmProject, root: &Path) -> Detection {
 }
 
 fn display_path(path: &Path, root: &Path) -> String {
-    path.strip_prefix(root).unwrap_or(path).display().to_string()
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 fn bounded_redacted(value: &str) -> String {
@@ -366,9 +366,9 @@ fn tool_result<T: Serialize>(result: Result<T, String>) -> CallToolResult {
             error: Some(bounded_redacted(&error)),
         },
     };
-    let value = serde_json::to_value(&envelope).unwrap_or_else(|error| {
-        serde_json::json!({"ok": false, "error": format!("serialization failed: {error}")})
-    });
+    let value = serde_json::to_value(&envelope).unwrap_or_else(
+        |error| serde_json::json!({"ok": false, "error": format!("serialization failed: {error}")}),
+    );
     if envelope.ok {
         CallToolResult::structured(value)
     } else {
@@ -402,6 +402,8 @@ mod tests {
             r#"[package]
 name = "fixture"
 version = "0.1.0"
+[lib]
+crate-type = ["cdylib", "lib"]
 [dependencies]
 solana-program = "2"
 "#,

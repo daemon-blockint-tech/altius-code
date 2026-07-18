@@ -32,8 +32,14 @@ pub struct FleetArgs {
 pub enum FleetCommand {
     /// Run the supervisor graph headlessly against a prompt.
     Run(FleetRunArgs),
+    /// Serve BeeAI ACP runs and A2A tasks over HTTP.
+    Serve(FleetServeArgs),
     /// Serve safe SVM tools over the Model Context Protocol.
     Mcp(FleetMcpArgs),
+    /// Serve the Editor Agent Client Protocol over stdio JSON-RPC.
+    Acp(FleetAcpArgs),
+    /// Serve the A2A Agent Card and task endpoint over HTTP.
+    A2a(FleetServeArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -47,6 +53,24 @@ pub struct FleetRunArgs {
     pub project: PathBuf,
 
     /// Use the deterministic offline LLM (no network). Useful for demos and CI.
+    #[arg(long)]
+    pub offline: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct FleetServeArgs {
+    /// HTTP bind address.
+    #[arg(long, default_value = "127.0.0.1:8788")]
+    pub bind: String,
+
+    /// Public base URL advertised by the A2A Agent Card.
+    #[arg(long, default_value = "http://127.0.0.1:8788")]
+    pub public_url: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct FleetAcpArgs {
+    /// Use deterministic offline responses instead of an LLM provider.
     #[arg(long)]
     pub offline: bool,
 }

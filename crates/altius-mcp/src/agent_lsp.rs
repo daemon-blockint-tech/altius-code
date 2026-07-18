@@ -46,7 +46,12 @@ impl AgentLspAttachment {
         self.service
             .list_all_tools()
             .await
-            .map(|tools| tools.into_iter().map(|tool| tool.name.to_string()).collect())
+            .map(|tools| {
+                tools
+                    .into_iter()
+                    .map(|tool| tool.name.to_string())
+                    .collect()
+            })
             .map_err(|error| AgentLspError::Request(error.to_string()))
     }
 
@@ -63,14 +68,17 @@ impl AgentLspAttachment {
     }
 }
 
-pub async fn attach_agent_lsp(
-    config: AgentLspConfig,
-) -> Result<AgentLspAttachment, AgentLspError> {
+pub async fn attach_agent_lsp(config: AgentLspConfig) -> Result<AgentLspAttachment, AgentLspError> {
     validate_config(&config)?;
     let command_name = config.command;
     let args = config.args;
     let working_directory = config.working_directory;
+    let path = std::env::var_os("PATH");
     let transport = TokioChildProcess::new(Command::new(command_name).configure(|command| {
+        command.env_clear();
+        if let Some(path) = path {
+            command.env("PATH", path);
+        }
         command.args(args);
         if let Some(directory) = working_directory {
             command.current_dir(directory);
