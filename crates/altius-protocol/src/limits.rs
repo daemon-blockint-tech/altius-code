@@ -25,6 +25,9 @@ pub const MAX_TEXT_LEN: usize = 16 * 1024;
 /// Maximum length for URLs and URIs.
 pub const MAX_URL_LEN: usize = 2_048;
 
+/// Maximum length for filesystem paths (cwd, workspace roots).
+pub const MAX_PATH_LEN: usize = 4_096;
+
 /// Maximum length for a DID string.
 pub const MAX_DID_LEN: usize = 512;
 
@@ -46,7 +49,10 @@ pub fn bounded_string(field: &'static str, value: &str, max: usize) -> Result<()
             format!("exceeds {max} bytes"),
         ));
     }
-    if value.chars().any(|c| c.is_control() && c != '\n' && c != '\t') {
+    if value
+        .chars()
+        .any(|c| c.is_control() && c != '\n' && c != '\t')
+    {
         return Err(ProtocolError::validation(
             field,
             "contains control characters",

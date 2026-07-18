@@ -8,10 +8,7 @@ use serde_json::json;
 pub enum ProtocolError {
     /// Inbound (untrusted) content failed bounded validation.
     #[error("invalid {field}: {reason}")]
-    Validation {
-        field: &'static str,
-        reason: String,
-    },
+    Validation { field: &'static str, reason: String },
 
     /// A referenced resource does not exist.
     #[error("{resource} `{id}` not found")]

@@ -1,9 +1,11 @@
+mod acp_command;
 mod cli;
 mod deploy_command;
 mod detect_command;
 mod error;
 mod fleet_command;
 mod rpc_endpoint;
+mod serve_command;
 mod terminal_approval;
 mod toolchain_for;
 
@@ -27,7 +29,10 @@ fn main() {
         Command::Deploy(args) => deploy_command::run_deploy(args),
         Command::Fleet(args) => match &args.command {
             FleetCommand::Run(run) => fleet_command::run_fleet_cmd(run),
+            FleetCommand::Serve(serve) => serve_command::run_serve_cmd(serve),
             FleetCommand::Mcp(mcp) => fleet_command::run_mcp_cmd(mcp),
+            FleetCommand::Acp(acp) => acp_command::run_acp_cmd(acp),
+            FleetCommand::A2a(a2a) => serve_command::run_a2a_cmd(a2a),
         },
     };
 

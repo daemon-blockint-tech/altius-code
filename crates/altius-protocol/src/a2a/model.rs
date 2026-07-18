@@ -56,9 +56,17 @@ impl AgentCard {
     /// Bounded validation, applied both to our own card at construction
     /// time and to any remote card we ingest.
     pub fn validate(&self) -> Result<()> {
-        limits::bounded_string("protocolVersion", &self.protocol_version, limits::MAX_NAME_LEN)?;
+        limits::bounded_string(
+            "protocolVersion",
+            &self.protocol_version,
+            limits::MAX_NAME_LEN,
+        )?;
         limits::bounded_string("name", &self.name, limits::MAX_NAME_LEN)?;
-        limits::bounded_string("description", &self.description, limits::MAX_DESCRIPTION_LEN)?;
+        limits::bounded_string(
+            "description",
+            &self.description,
+            limits::MAX_DESCRIPTION_LEN,
+        )?;
         limits::bounded_url("url", &self.url)?;
         limits::bounded_string("version", &self.version, limits::MAX_NAME_LEN)?;
         limits::bounded_list("skills", self.skills.len(), limits::MAX_LIST_LEN)?;
@@ -103,7 +111,10 @@ pub enum TaskState {
 
 impl TaskState {
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Canceled | Self::Failed | Self::Rejected)
+        matches!(
+            self,
+            Self::Completed | Self::Canceled | Self::Failed | Self::Rejected
+        )
     }
 }
 
@@ -169,7 +180,11 @@ impl A2aMessage {
     /// Bounded validation for untrusted inbound messages.
     pub fn validate(&self) -> Result<()> {
         limits::bounded_string("role", &self.role, limits::MAX_NAME_LEN)?;
-        limits::bounded_opt_string("messageId", self.message_id.as_deref(), limits::MAX_NAME_LEN)?;
+        limits::bounded_opt_string(
+            "messageId",
+            self.message_id.as_deref(),
+            limits::MAX_NAME_LEN,
+        )?;
         limits::bounded_list("parts", self.parts.len(), limits::MAX_LIST_LEN)?;
         for part in &self.parts {
             part.validate()?;

@@ -21,11 +21,13 @@ altius-signer = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
 solana-pubkey = "4.2.0"
 solana-rpc-client = "4.1.2"
 

@@ -17,7 +17,9 @@
 mod description;
 mod did;
 mod registry;
+mod routes;
 
 pub use description::{AgentDescription, InterfaceDescription};
 pub use did::{DidVerifier, DidWba, StubDidVerifier, VerifiedIdentity};
 pub use registry::{AgentRegistry, InMemoryRegistry};
+pub use routes::{router, AnpState, DiscoverQuery};

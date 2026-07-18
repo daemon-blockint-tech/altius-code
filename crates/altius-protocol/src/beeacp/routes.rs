@@ -228,7 +228,10 @@ mod tests {
     }
 
     fn app(executor: Arc<dyn RunExecutor>) -> Router {
-        router(BeeAcpState::new(Arc::new(InMemoryRunStore::new()), executor))
+        router(BeeAcpState::new(
+            Arc::new(InMemoryRunStore::new()),
+            executor,
+        ))
     }
 
     async fn send(app: &Router, request: Request<Body>) -> (StatusCode, Value) {
@@ -270,7 +273,9 @@ mod tests {
         let id = body["run_id"].as_str().unwrap();
         let (status, fetched) = send(
             &app,
-            Request::get(format!("/runs/{id}")).body(Body::empty()).unwrap(),
+            Request::get(format!("/runs/{id}"))
+                .body(Body::empty())
+                .unwrap(),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -293,7 +298,9 @@ mod tests {
 
         let (status, body) = send(
             &app,
-            Request::get("/runs/not-a-uuid").body(Body::empty()).unwrap(),
+            Request::get("/runs/not-a-uuid")
+                .body(Body::empty())
+                .unwrap(),
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -340,8 +347,7 @@ mod tests {
         assert_eq!(cancelled["status"], "cancelled");
 
         // Cancelling twice violates the transition table.
-        let (status, body) =
-            send(&app, post_json(&format!("/runs/{id}/cancel"), json!({}))).await;
+        let (status, body) = send(&app, post_json(&format!("/runs/{id}/cancel"), json!({}))).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["error"]["code"], "invalid_transition");
     }

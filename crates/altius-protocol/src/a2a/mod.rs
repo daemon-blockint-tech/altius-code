@@ -20,7 +20,9 @@ mod model;
 mod routes;
 
 pub use model::{
-    A2aMessage, AgentCapabilities, AgentCard, AgentSkill, Artifact, Part, Task, TaskStatus,
-    TaskState,
+    A2aMessage, AgentCapabilities, AgentCard, AgentSkill, Artifact, Part, Task, TaskState,
+    TaskStatus,
 };
-pub use routes::{router, A2aState, EchoTaskHandler, SendMessageRequest, TaskHandler, AGENT_CARD_PATH};
+pub use routes::{
+    router, A2aState, EchoTaskHandler, SendMessageRequest, TaskHandler, AGENT_CARD_PATH,
+};

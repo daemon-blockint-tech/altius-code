@@ -6,9 +6,10 @@
 //! over stdio.
 //!
 //! This module provides the codec ([`JsonRpcMessage`] and friends) and the
-//! typed messages for the three methods Altius needs first:
+//! typed messages for the methods Altius needs first:
 //!
 //! - `initialize` — version / capability negotiation
+//! - `session/new` — create a conversation session
 //! - `session/prompt` — send a user prompt into a session
 //! - `session/cancel` — notification cancelling an in-flight prompt
 //!
@@ -19,9 +20,13 @@
 mod codec;
 mod methods;
 
-pub use codec::{JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId, JSONRPC_VERSION};
+pub use codec::{
+    JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId,
+    JSONRPC_VERSION,
+};
 pub use methods::{
     AgentCapabilities, ClientCapabilities, ContentBlock, InitializeParams, InitializeResult,
-    PromptParams, PromptResult, SessionCancelParams, SessionId, StopReason, METHOD_INITIALIZE,
-    METHOD_SESSION_CANCEL, METHOD_SESSION_PROMPT,
+    NewSessionParams, NewSessionResult, PromptParams, PromptResult, SessionCancelParams, SessionId,
+    StopReason, METHOD_INITIALIZE, METHOD_SESSION_CANCEL, METHOD_SESSION_NEW,
+    METHOD_SESSION_PROMPT,
 };

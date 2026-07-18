@@ -178,7 +178,10 @@ mod tests {
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(task["status"]["state"], "completed");
         // Opaque payload survives untouched in task history.
-        assert_eq!(task["history"][0]["parts"][1]["data"]["opaque"]["anything"], true);
+        assert_eq!(
+            task["history"][0]["parts"][1]["data"]["opaque"]["anything"],
+            true
+        );
     }
 
     #[tokio::test]

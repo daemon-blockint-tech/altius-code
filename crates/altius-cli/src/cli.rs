@@ -66,6 +66,10 @@ pub struct FleetServeArgs {
     /// Public base URL advertised by the A2A Agent Card.
     #[arg(long, default_value = "http://127.0.0.1:8788")]
     pub public_url: String,
+
+    /// Use the deterministic offline LLM for BeeAI ACP run execution.
+    #[arg(long)]
+    pub offline: bool,
 }
 
 #[derive(Debug, Parser)]

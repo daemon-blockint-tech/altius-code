@@ -9,13 +9,13 @@ use crate::error::Result;
 use crate::limits;
 
 /// `initialize` — version and capability negotiation (editor → agent).
- pub const METHOD_INITIALIZE: &str = "initialize";
- /// `session/new` — create a conversation session (editor → agent).
- pub const METHOD_SESSION_NEW: &str = "session/new";
- /// `session/prompt` — send a user prompt into a session (editor → agent).
- pub const METHOD_SESSION_PROMPT: &str = "session/prompt";
- /// `session/cancel` — notification cancelling an in-flight prompt.
- pub const METHOD_SESSION_CANCEL: &str = "session/cancel";
+pub const METHOD_INITIALIZE: &str = "initialize";
+/// `session/new` — create a conversation session (editor → agent).
+pub const METHOD_SESSION_NEW: &str = "session/new";
+/// `session/prompt` — send a user prompt into a session (editor → agent).
+pub const METHOD_SESSION_PROMPT: &str = "session/prompt";
+/// `session/cancel` — notification cancelling an in-flight prompt.
+pub const METHOD_SESSION_CANCEL: &str = "session/cancel";
 
 /// Opaque session identifier assigned by the agent.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

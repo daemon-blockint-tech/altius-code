@@ -218,10 +218,8 @@ mod tests {
 
     #[test]
     fn error_response_round_trips() {
-        let response = JsonRpcResponse::failure(
-            RequestId::Number(7),
-            JsonRpcError::method_not_found("nope"),
-        );
+        let response =
+            JsonRpcResponse::failure(RequestId::Number(7), JsonRpcError::method_not_found("nope"));
         let bytes = JsonRpcMessage::Response(response.clone()).encode().unwrap();
         match JsonRpcMessage::decode(&bytes).unwrap() {
             JsonRpcMessage::Response(decoded) => {

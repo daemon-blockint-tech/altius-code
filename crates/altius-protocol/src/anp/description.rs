@@ -40,11 +40,19 @@ impl AgentDescription {
     pub fn validate(&self) -> Result<DidWba> {
         let did = DidWba::parse(&self.did)?;
         limits::bounded_string("name", &self.name, limits::MAX_NAME_LEN)?;
-        limits::bounded_string("description", &self.description, limits::MAX_DESCRIPTION_LEN)?;
+        limits::bounded_string(
+            "description",
+            &self.description,
+            limits::MAX_DESCRIPTION_LEN,
+        )?;
         limits::bounded_opt_string("version", self.version.as_deref(), limits::MAX_NAME_LEN)?;
         limits::bounded_list("interfaces", self.interfaces.len(), limits::MAX_LIST_LEN)?;
         for interface in &self.interfaces {
-            limits::bounded_string("interface.protocol", &interface.protocol, limits::MAX_NAME_LEN)?;
+            limits::bounded_string(
+                "interface.protocol",
+                &interface.protocol,
+                limits::MAX_NAME_LEN,
+            )?;
             limits::bounded_url("interface.url", &interface.url)?;
             limits::bounded_opt_string(
                 "interface.description",
