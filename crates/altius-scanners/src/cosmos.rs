@@ -28,7 +28,8 @@ impl Scanner for CosmosScanner {
             ScanReport::new(root.display().to_string()).with_chain(ChainFamily::Cosmos);
         report.scanners.push(self.name().into());
         for path in collect_files(root, &["rs", "go"], 10)? {
-            let contents = fs::read_to_string(&path).map_err(|e| ScannerError::Io(e.to_string()))?;
+            let contents =
+                fs::read_to_string(&path).map_err(|e| ScannerError::Io(e.to_string()))?;
             let file = path.display().to_string();
             let looks_cosmwasm = contents.contains("cosmwasm")
                 || contents.contains("CosmosMsg")

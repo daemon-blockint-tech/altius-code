@@ -3,14 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::ScannerError;
 
-const SKIPPED_DIRS: [&str; 6] = [
-    "target",
-    ".git",
-    "node_modules",
-    "cache",
-    "out",
-    "dist",
-];
+const SKIPPED_DIRS: [&str; 6] = ["target", ".git", "node_modules", "cache", "out", "dist"];
 
 pub(crate) fn collect_files(
     root: &Path,

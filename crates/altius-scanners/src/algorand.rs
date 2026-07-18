@@ -28,7 +28,8 @@ impl Scanner for AlgorandScanner {
             ScanReport::new(root.display().to_string()).with_chain(ChainFamily::Algorand);
         report.scanners.push(self.name().into());
         for path in collect_files(root, &["teal", "py"], 10)? {
-            let contents = fs::read_to_string(&path).map_err(|e| ScannerError::Io(e.to_string()))?;
+            let contents =
+                fs::read_to_string(&path).map_err(|e| ScannerError::Io(e.to_string()))?;
             let file = path.display().to_string();
             let is_pyteal = file.ends_with(".py")
                 && (contents.contains("pyteal") || contents.contains("PyTeal"));

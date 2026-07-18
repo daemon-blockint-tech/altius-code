@@ -27,7 +27,8 @@ impl Scanner for TonScanner {
         let mut report = ScanReport::new(root.display().to_string()).with_chain(ChainFamily::Ton);
         report.scanners.push(self.name().into());
         for path in collect_files(root, &["fc", "func", "tact"], 10)? {
-            let contents = fs::read_to_string(&path).map_err(|e| ScannerError::Io(e.to_string()))?;
+            let contents =
+                fs::read_to_string(&path).map_err(|e| ScannerError::Io(e.to_string()))?;
             let file = path.display().to_string();
             if (contents.contains("sender()") || contents.contains("msg.sender"))
                 && !contents.contains("equal")

@@ -62,6 +62,7 @@ fn options_for_run(template: &SupervisorOptions, agent_name: &str) -> Supervisor
     SupervisorOptions {
         agent_name: Some(agent_name.to_owned()),
         browser: template.browser.clone(),
+        hooks: template.hooks.clone(),
     }
 }
 
@@ -225,6 +226,7 @@ async fn build_supervisor_options(
         SupervisorOptions {
             agent_name: None,
             browser: browser_tooling,
+            hooks: Vec::new(),
         },
         browser_enabled,
     ))

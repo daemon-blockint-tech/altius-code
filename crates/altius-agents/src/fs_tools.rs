@@ -164,11 +164,7 @@ pub fn edit_file(
     }))
 }
 
-pub fn grep(
-    project_root: &Path,
-    pattern: &str,
-    path: Option<&str>,
-) -> Result<Value, String> {
+pub fn grep(project_root: &Path, pattern: &str, path: Option<&str>) -> Result<Value, String> {
     if pattern.is_empty() {
         return Err("`pattern` must not be empty".into());
     }
@@ -269,9 +265,7 @@ pub fn run_command(
         allowlist.iter().map(String::as_str).collect()
     };
     if !allowed.iter().any(|name| *name == binary) {
-        return Err(format!(
-            "binary `{binary}` is not on the command allowlist"
-        ));
+        return Err(format!("binary `{binary}` is not on the command allowlist"));
     }
     if binary == "git" {
         let sub = argv.get(1).map(String::as_str).unwrap_or("");
@@ -489,12 +483,7 @@ mod tests {
             .iter()
             .map(|s| (*s).to_owned())
             .collect();
-        assert!(run_command(
-            dir.path(),
-            &["rm".into(), "-rf".into(), ".".into()],
-            &allow
-        )
-        .is_err());
+        assert!(run_command(dir.path(), &["rm".into(), "-rf".into(), ".".into()], &allow).is_err());
         assert!(run_command(
             dir.path(),
             &["sh".into(), "-c".into(), "echo hi".into()],
@@ -507,12 +496,7 @@ mod tests {
             &allow
         )
         .is_err());
-        assert!(run_command(
-            dir.path(),
-            &["git".into(), "push".into()],
-            &allow
-        )
-        .is_err());
+        assert!(run_command(dir.path(), &["git".into(), "push".into()], &allow).is_err());
         assert!(run_command(
             dir.path(),
             &["cargo".into(), "test".into(), "|".into(), "cat".into()],

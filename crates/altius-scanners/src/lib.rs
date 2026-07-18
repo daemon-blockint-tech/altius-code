@@ -9,16 +9,16 @@ mod registry;
 mod scanner;
 mod util;
 
-#[cfg(feature = "svm")]
-pub mod svm;
-#[cfg(feature = "evm")]
-pub mod evm;
 #[cfg(feature = "algorand")]
 pub mod algorand;
 #[cfg(feature = "cairo")]
 pub mod cairo;
 #[cfg(feature = "cosmos")]
 pub mod cosmos;
+#[cfg(feature = "evm")]
+pub mod evm;
+#[cfg(feature = "svm")]
+pub mod svm;
 #[cfg(feature = "ton")]
 pub mod ton;
 

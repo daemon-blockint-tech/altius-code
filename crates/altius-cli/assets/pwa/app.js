@@ -124,6 +124,17 @@
       const pressed = btn.dataset.agent === agent;
       btn.setAttribute("aria-pressed", pressed ? "true" : "false");
     }
+    if (els.prompt) {
+      if (agent === "security") {
+        els.prompt.placeholder =
+          "@Security audit this program for missing signer checks";
+      } else if (agent === "browser") {
+        els.prompt.placeholder =
+          "@Browser open https://example.com and summarize the title";
+      } else {
+        els.prompt.placeholder = "Ask the Altius fleet…";
+      }
+    }
   }
 
   /* Home state: center the composer (Perplexity-style) until a run is open. */

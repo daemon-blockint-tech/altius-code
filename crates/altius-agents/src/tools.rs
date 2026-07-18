@@ -142,6 +142,13 @@ pub(crate) fn explorer_tools() -> Vec<ToolSpec> {
 /// Tool specs available to the security node (read-only).
 pub(crate) fn security_tools() -> Vec<ToolSpec> {
     let mut tools = detect_lint_tools();
+    tools.push(ToolSpec {
+        name: "scan_project".into(),
+        description: "Run Altius native multi-chain security scanners and return \
+             canonical findings. Read-only; never deploys or signs."
+            .into(),
+        parameters: path_tool_parameters(),
+    });
     tools.extend(read_only_fs_tools());
     tools
 }
@@ -151,8 +158,7 @@ pub(crate) fn coder_tools() -> Vec<ToolSpec> {
     let mut tools = explorer_tools();
     tools.push(ToolSpec {
         name: "write_file".into(),
-        description: "Create or overwrite a UTF-8 file under the project root. Never signs."
-            .into(),
+        description: "Create or overwrite a UTF-8 file under the project root. Never signs.".into(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -335,9 +341,11 @@ pub(crate) async fn execute_local_tool(
     let args = call.arguments.clone();
     let root = project_root.to_path_buf();
     let allowlist = bash_allowlist.to_vec();
-    let outcome = tokio::task::spawn_blocking(move || execute_local_tool_sync(&root, &allowlist, &name, &args))
-        .await
-        .unwrap_or_else(|error| Err(format!("tool worker failed: {error}")));
+    let outcome = tokio::task::spawn_blocking(move || {
+        execute_local_tool_sync(&root, &allowlist, &name, &args)
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("tool worker failed: {error}")));
     match outcome {
         Ok(data) => envelope_ok(data),
         Err(error) => envelope_err(error),
@@ -358,6 +366,10 @@ fn execute_local_tool_sync(
         "lint_project" => {
             let target = resolve_detect_path(project_root, arguments)?;
             lint_output(&target)
+        }
+        "scan_project" => {
+            let target = resolve_detect_path(project_root, arguments)?;
+            scan_output(&target)
         }
         "read_file" => {
             let path = require_str(arguments, "path")?;
@@ -485,6 +497,14 @@ fn lint_output(project: &Path) -> Result<serde_json::Value, String> {
     Ok(report
         .to_scan_report(project.display().to_string())
         .to_lint_compat_json())
+}
+
+fn scan_output(project: &Path) -> Result<serde_json::Value, String> {
+    let registry = altius_scanners::default_registry();
+    let report = registry
+        .scan_all(project)
+        .map_err(|error| error.to_string())?;
+    Ok(report.to_lint_compat_json())
 }
 
 fn bounded_redacted(value: &str) -> String {

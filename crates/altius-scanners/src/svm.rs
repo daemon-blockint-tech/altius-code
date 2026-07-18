@@ -28,9 +28,7 @@ impl Scanner for SvmScanner {
         };
         let toolchain: Box<dyn SvmToolchain> = match project.framework {
             Framework::Anchor => Box::new(AnchorToolchain::new(root)),
-            Framework::Pinocchio | Framework::Native => {
-                Box::new(CargoBuildSbfToolchain::new(root))
-            }
+            Framework::Pinocchio | Framework::Native => Box::new(CargoBuildSbfToolchain::new(root)),
         };
         let lint = toolchain.lint().map_err(|e| ScannerError::Failed {
             scanner: self.name().into(),

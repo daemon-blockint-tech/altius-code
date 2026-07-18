@@ -59,8 +59,10 @@ fn has_ext(root: &Path, ext: &str) -> bool {
 }
 
 fn probe_evm(root: &Path) -> bool {
-    has_any(root, &["foundry.toml", "hardhat.config.js", "hardhat.config.ts"])
-        || has_ext(root, "sol")
+    has_any(
+        root,
+        &["foundry.toml", "hardhat.config.js", "hardhat.config.ts"],
+    ) || has_ext(root, "sol")
 }
 
 fn probe_algorand(root: &Path) -> bool {
@@ -86,7 +88,13 @@ fn probe_ton(root: &Path) -> bool {
     has_ext(root, "fc") || has_ext(root, "func") || has_ext(root, "tact")
 }
 
-simple_plugin!(EvmDetectPlugin, "altius-evm-detect", ChainFamily::Evm, 60, probe_evm);
+simple_plugin!(
+    EvmDetectPlugin,
+    "altius-evm-detect",
+    ChainFamily::Evm,
+    60,
+    probe_evm
+);
 simple_plugin!(
     AlgorandDetectPlugin,
     "altius-algorand-detect",
@@ -108,4 +116,10 @@ simple_plugin!(
     55,
     probe_cosmos
 );
-simple_plugin!(TonDetectPlugin, "altius-ton-detect", ChainFamily::Ton, 55, probe_ton);
+simple_plugin!(
+    TonDetectPlugin,
+    "altius-ton-detect",
+    ChainFamily::Ton,
+    55,
+    probe_ton
+);

@@ -140,7 +140,11 @@ impl InMemorySecurityStore {
 #[async_trait]
 impl SecurityKnowledge for InMemorySecurityStore {
     async fn upsert_target(&self, target: TargetRecord) -> KnowledgeResult<()> {
-        self.inner.lock().await.targets.insert(target.id.clone(), target);
+        self.inner
+            .lock()
+            .await
+            .targets
+            .insert(target.id.clone(), target);
         Ok(())
     }
 
@@ -172,7 +176,10 @@ impl SecurityKnowledge for InMemorySecurityStore {
 
     async fn add_evidence(&self, evidence: EvidenceRecord) -> KnowledgeResult<()> {
         let mut guard = self.inner.lock().await;
-        if !guard.vulns.contains_key(&evidence.vulnerability_fingerprint) {
+        if !guard
+            .vulns
+            .contains_key(&evidence.vulnerability_fingerprint)
+        {
             return Err(KnowledgeError::Message(format!(
                 "unknown vulnerability {}",
                 evidence.vulnerability_fingerprint
@@ -288,7 +295,14 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(store.vulnerabilities_for_target("prog-1").await.unwrap().len(), 1);
+        assert_eq!(
+            store
+                .vulnerabilities_for_target("prog-1")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(store.evidence_for(&fp).await.unwrap().len(), 1);
     }
 

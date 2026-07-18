@@ -124,11 +124,23 @@ pub fn security_schema() -> DomainSchema {
                 "A contract/program/module under analysis",
                 Some("Artifact"),
             ),
-            class("Contract", "An on-chain program (alias of Target)", Some("Target")),
+            class(
+                "Contract",
+                "An on-chain program (alias of Target)",
+                Some("Target"),
+            ),
             class("Instruction", "A callable entrypoint of a contract", None),
             class("Account", "An on-chain account a contract touches", None),
-            class("Evidence", "Source span or dynamic trace supporting a finding", None),
-            class("Scanner", "A native or adapter scanner that emits findings", None),
+            class(
+                "Evidence",
+                "Source span or dynamic trace supporting a finding",
+                None,
+            ),
+            class(
+                "Scanner",
+                "A native or adapter scanner that emits findings",
+                None,
+            ),
             class("Vulnerability", "A security weakness in a target", None),
             class(
                 "MissingSignerCheck",

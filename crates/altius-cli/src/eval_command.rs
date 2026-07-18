@@ -13,20 +13,16 @@ pub fn run_eval(args: &EvalArgs) -> Result<(), CliError> {
     } else {
         GoldSuite::builtin_smoke()
     };
-    let fixtures_root = args
-        .fixtures
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("."));
-    let report = score_suite(&suite, &fixtures_root)
-        .map_err(|e| CliError::message(e.to_string()))?;
+    let fixtures_root = args.fixtures.clone().unwrap_or_else(|| PathBuf::from("."));
+    let report =
+        score_suite(&suite, &fixtures_root).map_err(|e| CliError::message(e.to_string()))?;
 
     if args.markdown {
         println!("{}", report.to_markdown());
     } else {
         println!(
             "{}",
-            serde_json::to_string_pretty(&report)
-                .map_err(|e| CliError::message(e.to_string()))?
+            serde_json::to_string_pretty(&report).map_err(|e| CliError::message(e.to_string()))?
         );
     }
     Ok(())

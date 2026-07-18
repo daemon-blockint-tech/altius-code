@@ -22,7 +22,7 @@ todos:
     status: completed
   - id: ship-product-surfaces
     content: Add scan/eval CLI, MCP/A2A/ACP integration, SARIF CI output, and later PWA report review
-    status: in_progress
+    status: completed
   - id: todo-1784398597272-0jnebfn6f
     content: implement knowledge from https://workshop.neodyme.io/index.html to codebase system
     status: completed

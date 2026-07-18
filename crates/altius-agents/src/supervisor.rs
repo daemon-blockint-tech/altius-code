@@ -149,8 +149,12 @@ struct LlmNode {
     llm: Arc<dyn LlmClient>,
     /// Tools offered to this node; empty means plain chat.
     tools: Vec<ToolSpec>,
-    /// When set, tool calls go here. Otherwise local SVM tools are used.
+    /// When set, rebuild Hooked→Permissioned→LocalTools per run from the
+    /// prompt's `[project_path=…]` (or cwd).
+    local_policy: Option<ToolPolicy>,
+    /// External dispatcher (e.g. browser MCP), already hook-wrapped.
     dispatcher: Option<Arc<dyn ToolDispatcher>>,
+    hooks: Vec<Arc<dyn ToolHook>>,
     after: AfterFn,
 }
 
@@ -168,13 +172,22 @@ impl LlmNode {
             system,
             llm,
             tools: Vec::new(),
+            local_policy: None,
             dispatcher: None,
+            hooks: Vec::new(),
             after: Box::new(after),
         }
     }
 
-    fn with_tools(mut self, tools: Vec<ToolSpec>) -> Self {
+    fn with_local_tools(
+        mut self,
+        tools: Vec<ToolSpec>,
+        policy: ToolPolicy,
+        hooks: Vec<Arc<dyn ToolHook>>,
+    ) -> Self {
         self.tools = tools;
+        self.local_policy = Some(policy);
+        self.hooks = hooks;
         self
     }
 
@@ -219,12 +232,18 @@ impl Node<FleetState> for LlmNode {
             state.security_notes.as_deref().unwrap_or("(none)"),
             state.critique.as_deref().unwrap_or("(none)"),
         );
-        let messages = vec![
-            ChatMessage::system(system),
-            ChatMessage::user(user_blob),
-        ];
+        let messages = vec![ChatMessage::system(system), ChatMessage::user(user_blob)];
         let text = if self.tools.is_empty() {
             self.llm.complete(&messages).await
+        } else if let Some(policy) = &self.local_policy {
+            let dispatcher = harness_dispatcher(&project_root, policy.clone(), &self.hooks);
+            tools::tool_loop(
+                self.llm.as_ref(),
+                &self.tools,
+                dispatcher.as_ref(),
+                messages,
+            )
+            .await
         } else if let Some(dispatcher) = &self.dispatcher {
             tools::tool_loop(
                 self.llm.as_ref(),
@@ -260,15 +279,7 @@ pub fn build_supervisor_graph_with(
     let critic_llm = Arc::clone(&llm);
     let finalize_llm = Arc::clone(&llm);
 
-    // Project root for dispatcher policy is resolved per-prompt at run time;
-    // graph build uses cwd so tools are wired; LocalTools re-resolves paths
-    // from each call. Use "." as the build-time root for shared dispatchers.
-    let build_root = std::path::Path::new(".");
-    let explorer_dispatcher =
-        harness_dispatcher(build_root, ToolPolicy::read_only(), &options.hooks);
-    let coder_dispatcher = harness_dispatcher(build_root, ToolPolicy::coder(), &options.hooks);
-    let security_dispatcher =
-        harness_dispatcher(build_root, ToolPolicy::read_only(), &options.hooks);
+    let hooks = options.hooks.clone();
 
     let mut browser_node = LlmNode::new(
         AgentRole::Browser.as_str(),
@@ -280,7 +291,7 @@ pub fn build_supervisor_graph_with(
         },
     );
     if let Some(browser) = &options.browser {
-        let browser_disp = wrap_with_hooks(Arc::clone(&browser.dispatcher), &options.hooks);
+        let browser_disp = wrap_with_hooks(Arc::clone(&browser.dispatcher), &hooks);
         browser_node = browser_node.with_dispatcher(browser.tools.clone(), browser_disp);
     }
 
@@ -293,7 +304,11 @@ pub fn build_supervisor_graph_with(
             NodeResult::Continue(state)
         },
     )
-    .with_dispatcher(tools::security_tools(), security_dispatcher);
+    .with_local_tools(
+        tools::security_tools(),
+        ToolPolicy::read_only(),
+        hooks.clone(),
+    );
 
     let graph = GraphBuilder::new()
         .add_node(LlmNode::new(
@@ -322,7 +337,11 @@ pub fn build_supervisor_graph_with(
             )
             // Read-only FS + detect/lint; offline clients that never emit tool
             // calls are unaffected.
-            .with_dispatcher(tools::explorer_tools(), explorer_dispatcher),
+            .with_local_tools(
+                tools::explorer_tools(),
+                ToolPolicy::read_only(),
+                hooks.clone(),
+            ),
         )
         .add_node(
             LlmNode::new(
@@ -334,7 +353,7 @@ pub fn build_supervisor_graph_with(
                     NodeResult::Continue(state)
                 },
             )
-            .with_dispatcher(tools::coder_tools(), coder_dispatcher),
+            .with_local_tools(tools::coder_tools(), ToolPolicy::coder(), hooks.clone()),
         )
         .add_node(browser_node)
         .add_node(security_node)
@@ -662,7 +681,7 @@ mod tests {
             "open https://example.com and summarize the title",
             SupervisorOptions {
                 agent_name: Some("browser".into()),
-                browser: None,
+                ..SupervisorOptions::default()
             },
         )
         .await
@@ -742,7 +761,7 @@ mod tests {
             "audit this Anchor project for missing signer checks",
             SupervisorOptions {
                 agent_name: Some("security".into()),
-                browser: None,
+                ..SupervisorOptions::default()
             },
         )
         .await

@@ -486,11 +486,9 @@ impl SecurityKnowledge for Neo4jKnowledgeStore {
     async fn upsert_scanner(&self, scanner: ScannerRecord) -> KnowledgeResult<()> {
         self.graph
             .run(
-                neo4rs::query(
-                    "MERGE (s:Scanner {name: $name}) SET s.kind = $kind",
-                )
-                .param("name", scanner.name)
-                .param("kind", scanner.kind),
+                neo4rs::query("MERGE (s:Scanner {name: $name}) SET s.kind = $kind")
+                    .param("name", scanner.name)
+                    .param("kind", scanner.kind),
             )
             .await?;
         Ok(())
@@ -518,10 +516,7 @@ impl SecurityKnowledge for Neo4jKnowledgeStore {
                 .param("title", vuln.title)
                 .param("description", vuln.description)
                 .param("validation", vuln.validation)
-                .param(
-                    "ontology_class",
-                    vuln.ontology_class.unwrap_or_default(),
-                )
+                .param("ontology_class", vuln.ontology_class.unwrap_or_default())
                 .param("created_at", vuln.created_at.to_rfc3339())
                 .param("target_id", vuln.target_id)
                 .param("scanner", vuln.scanner),
@@ -542,7 +537,10 @@ impl SecurityKnowledge for Neo4jKnowledgeStore {
                 .param("fp", evidence.vulnerability_fingerprint)
                 .param("id", evidence.id)
                 .param("file", evidence.file)
-                .param("start_line", evidence.start_line.map(|n| n as i64).unwrap_or(-1))
+                .param(
+                    "start_line",
+                    evidence.start_line.map(|n| n as i64).unwrap_or(-1),
+                )
                 .param("snippet", evidence.snippet.unwrap_or_default()),
             )
             .await?;
@@ -648,9 +646,7 @@ impl SecurityKnowledge for Neo4jKnowledgeStore {
             .await?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
-            let start_line: i64 = row
-                .get("start_line")
-                .unwrap_or(-1);
+            let start_line: i64 = row.get("start_line").unwrap_or(-1);
             out.push(EvidenceRecord {
                 id: row
                     .get("id")

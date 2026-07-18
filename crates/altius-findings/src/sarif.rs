@@ -90,6 +90,9 @@ mod tests {
         ));
         let sarif = to_sarif(&report);
         assert_eq!(sarif["version"], "2.1.0");
-        assert_eq!(sarif["runs"][0]["results"][0]["ruleId"], "svm-missing-signer-check");
+        assert_eq!(
+            sarif["runs"][0]["results"][0]["ruleId"],
+            "svm-missing-signer-check"
+        );
     }
 }

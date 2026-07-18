@@ -27,7 +27,8 @@ impl Scanner for EvmScanner {
         let mut report = ScanReport::new(root.display().to_string()).with_chain(ChainFamily::Evm);
         report.scanners.push(self.name().into());
         for path in collect_files(root, &["sol"], 10)? {
-            let contents = fs::read_to_string(&path).map_err(|e| ScannerError::Io(e.to_string()))?;
+            let contents =
+                fs::read_to_string(&path).map_err(|e| ScannerError::Io(e.to_string()))?;
             let file = path.display().to_string();
             if contents.contains(".call{") || contents.contains(".call(") {
                 if !contents.contains("require(") && !contents.contains("success") {

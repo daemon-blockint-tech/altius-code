@@ -25,12 +25,7 @@ pub enum HookOutcome {
 }
 
 pub trait ToolHook: Send + Sync {
-    fn on_event(
-        &self,
-        event: HookEvent,
-        call: &ToolCall,
-        result: Option<&str>,
-    ) -> HookOutcome;
+    fn on_event(&self, event: HookEvent, call: &ToolCall, result: Option<&str>) -> HookOutcome;
 }
 
 /// Runs Pre hooks → inner dispatcher → Post hooks.

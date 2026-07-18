@@ -190,7 +190,10 @@ mod tests {
             .await;
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["ok"], false);
-        assert_eq!(std::fs::read_to_string(dir.path().join("a.txt")).unwrap(), "x");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "x"
+        );
     }
 
     #[test]

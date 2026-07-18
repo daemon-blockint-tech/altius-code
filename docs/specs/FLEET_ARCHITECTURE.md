@@ -108,22 +108,36 @@ Dependency direction stays acyclic:
 | Agent | Responsibility | Dangerous tools |
 |---|---|---|
 | `router` | Decompose, route, merge, enforce budgets | none |
-| `explorer` | Codebase search / intelligence | read-only (`detect_project`, `lint_project` via tool-use loop) |
-| `coder` | Edits, builds, tests | writes files; no signing |
+| `explorer` | Codebase search / intelligence | read-only (`detect_project`, `lint_project`, `read_file`, `grep`, `glob`) |
+| `coder` | Edits, builds, tests | `write_file` / `edit_file` / allowlisted `run_command`; no signing |
 | `browser` | Web automation via attached browser MCP | read/interact only; `browser_*` tool allowlist; no TxGuard path |
-| `security` | Lint/audit review | read-only |
+| `security` | Lint/audit review | read-only (detect/lint + FS read tools) |
 | `deployer` | Produces `TxRequest`s only | must call TxGuard |
 | `payment` | x402 paid API calls | must call TxGuard (`TxKind::Payment`) |
 | `knowledge` | Neo4j + ontology queries | schema-gated graph writes |
 | `critic` | Trajectory QA before finalize | none |
 
-Router, explorer, coder, browser, and critic are live graph nodes. The
-explorer node runs a bounded `tool_loop` against local SVM tools; the
-browser node does the same against an optional external MCP attachment
-(e.g. Playwright) when `agent_name=browser` or the prompt contains
-`@Browser`. Security, deployer, payment, and knowledge have prompt/policy
-packs and backing crates but their graph-node wiring is still pending
-(see `stub_roles()` in `altius-agents`).
+Router, explorer, coder, browser, security, and critic are live graph nodes.
+Explorer/coder/security run a bounded `tool_loop` (up to 12 rounds) through
+`HookedDispatcher` → `PermissionedDispatcher` → `LocalTools`. Project
+instructions load from `.altius.md` or `ALTIUS.md` at the project root
+(optional `[project_path=…]` marker) and inject into specialist system
+prompts after secret redaction. Optional `[tools]` in `altius.toml`
+tunes write/bash allowlists without touching TxGuard `[svm.policy]`:
+
+```toml
+[tools]
+allow_write = true
+allow_bash = true
+# bash_allowlist = ["cargo", "anchor", "forge"]
+# deny_tools = ["run_command"]
+```
+
+The browser node uses an optional external MCP attachment (e.g. Playwright)
+when `agent_name=browser` or the prompt contains `@Browser`, still wrapped
+with the same hook plane. Deployer, payment, and knowledge have
+prompt/policy packs and backing crates but their graph-node wiring is still
+pending (see `stub_roles()` in `altius-agents`).
 
 Browser MCP attach is opt-in at `altius fleet serve` via
 `--browser-mcp-cmd` / `ALTIUS_BROWSER_MCP_CMD` (args:
@@ -193,11 +207,12 @@ and awaiting-approval resume.
 ## 8. Intentional stubs / future work
 
 - ANP `did:wba` verification and full discovery.
-- Graph-node wiring for security/deployer/payment/knowledge specialists.
+- Graph-node wiring for deployer/payment/knowledge specialists.
 - Host-function surface for WASM modules that need `fs_read` /
   `network` (today those capabilities are recorded but unused — guests
   get no imports).
 - SPL-token x402 settlement.
+- Skills loader (`.altius/skills`), context compaction, plugin marketplace.
 - Eval harness; adversarial prompt-injection fixtures only if explicitly
   enabled (no third-party leaked prompts, ever).
 - Mobile-facing auth (bearer), SSE/push notifications, and durable
@@ -215,3 +230,5 @@ and awaiting-approval resume.
   (feature `mcp`), with bounded untrusted-response decoding.
 - Fuel- and memory-metered WASM execution via wasmtime (feature
   `wasmtime`); guest ABI `memory` + `alloc` + `run`, no host imports.
+- Harness Phase A: sandboxed FS/`run_command` tools, Pre/PostToolUse hooks,
+  FailClosed `[tools]` permissions, `.altius.md` project memory.

@@ -4,22 +4,22 @@ overview: "Add Claude Code–style harness primitives to the fleet coding loop: 
 todos:
   - id: fs-tools
     content: Add read_file/grep/glob/write_file/edit_file/run_command with path sandbox + bash allowlist; coder_tools + widen explorer/security specs; bump MAX_TOOL_ROUNDS
-    status: in_progress
+    status: completed
   - id: permissions
     content: Add ToolPolicy + PermissionedDispatcher; optional [tools] in altius.toml; role defaults FailClosed
-    status: pending
+    status: completed
   - id: hooks
     content: Add ToolHook + HookedDispatcher (Pre deny / Post replace); wire around LocalTools and McpTools
-    status: pending
+    status: completed
   - id: project-memory
     content: Load .altius.md/ALTIUS.md, redact, inject into LlmNode system context
-    status: pending
+    status: completed
   - id: supervisor-wire
     content: Give Coder tools; wrap explorers/coder/security/browser dispatchers; update system prompts
-    status: pending
+    status: completed
   - id: tests-docs
     content: Unit tests for sandbox/permissions/hooks/memory; update FLEET_ARCHITECTURE.md
-    status: pending
+    status: completed
 isProject: false
 ---
 

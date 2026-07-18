@@ -56,7 +56,8 @@ mod tests {
         .unwrap();
         let mem = load(dir.path()).expect("memory");
         assert!(mem.contains("Use Anchor"));
-        assert!(!mem.contains("sk-secret-value-here") || mem.contains("[REDACTED]"));
+        assert!(!mem.contains("sk-secret-value-here"));
+        assert!(mem.contains("[REDACTED]"));
     }
 
     #[test]
