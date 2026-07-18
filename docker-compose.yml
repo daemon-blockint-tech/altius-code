@@ -1,0 +1,28 @@
+# Local development services for the Altius fleet.
+#
+#   docker compose up -d neo4j
+#   ALTIUS_NEO4J_URI=bolt://127.0.0.1:7687 \
+#   ALTIUS_NEO4J_PASSWORD=altius-dev \
+#     cargo test -p altius-memory --features neo4j
+#
+# Neo4j is optional everywhere: unit tests and offline CI use the in-memory
+# stores. Credentials below are for local development only.
+
+services:
+  neo4j:
+    image: neo4j:5-community
+    ports:
+      - "7474:7474" # HTTP browser
+      - "7687:7687" # Bolt
+    environment:
+      NEO4J_AUTH: neo4j/altius-dev
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  neo4j-data:

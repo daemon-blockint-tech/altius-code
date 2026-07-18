@@ -57,6 +57,23 @@ so it can be embedded directly in editors that support the protocol. You get
 the same agent — codebase awareness, edits, command execution — surfaced
 inside your editor's native UI.
 
+## Protocol Naming: Two Different "ACP"s
+
+Two unrelated protocols share the ACP acronym, and Altius implements both.
+To keep them straight, this repo consistently uses:
+
+| Name in this repo | Protocol | Purpose | Where |
+|---|---|---|---|
+| **Editor ACP** | [Agent Client Protocol](https://agentclientprotocol.com) | Editor ↔ agent (JSON-RPC over stdio; sessions, prompts) | `altius fleet acp`, `altius-protocol::editor_acp` |
+| **BeeAI ACP** | [Agent Communication Protocol](https://agentcommunicationprotocol.dev) | Agent ↔ agent (REST run lifecycle: create/get/cancel/resume) | `altius fleet serve`, `altius-protocol::beeacp` |
+
+Related but distinct surfaces: **MCP** ([Model Context Protocol](https://modelcontextprotocol.io))
+exposes tools to agents (`altius fleet mcp`), and **A2A**
+([Agent2Agent](https://github.com/a2aproject/A2A)) publishes the agent card and
+task delegation endpoint (`altius fleet a2a`). See
+[`docs/specs/FLEET_ARCHITECTURE.md`](docs/specs/FLEET_ARCHITECTURE.md) for the
+full architecture.
+
 ## Status
 
 Altius Code is under active development. Installation instructions, full
