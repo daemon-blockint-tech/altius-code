@@ -20,4 +20,8 @@ pub enum CliError {
     MissingSignerSocket,
     #[error("invalid --cluster value: {0}")]
     InvalidCluster(#[from] altius_svm_detect::ParseClusterError),
+    #[error("OPENROUTER_API_KEY is not set; the fleet needs it to reach its models")]
+    MissingApiKey,
+    #[error(transparent)]
+    Fleet(#[from] altius_fleet::FleetError),
 }
