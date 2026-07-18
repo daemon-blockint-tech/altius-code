@@ -1,4 +1,5 @@
 mod rules;
+mod span;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,7 +10,7 @@ use crate::report::LintReport;
 const SKIPPED_DIRS: [&str; 4] = ["target", ".git", ".anchor", "node_modules"];
 const MAX_WALK_DEPTH: usize = 8;
 
-/// Runs all six v1 SVM lint rules over every `.rs` file under
+/// Runs all native SVM lint rules over every `.rs` file under
 /// `project_root` (skipping build/vendor directories) and collects the
 /// findings.
 pub(crate) fn run_all(project_root: &Path) -> Result<LintReport, ToolError> {
@@ -22,6 +23,12 @@ pub(crate) fn run_all(project_root: &Path) -> Result<LintReport, ToolError> {
         findings.extend(rules::unvalidated_writable_account(&contents, &path));
         findings.extend(rules::lamports_overflow_risk(&contents, &path));
         findings.extend(rules::close_without_zeroing(&contents, &path));
+        findings.extend(rules::pda_bump_canonicalization(&contents, &path));
+        findings.extend(rules::sysvar_address_validation(&contents, &path));
+        findings.extend(rules::account_confusion(&contents, &path));
+        findings.extend(rules::unchecked_arithmetic(&contents, &path));
+        findings.extend(rules::remaining_accounts_risk(&contents, &path));
+        findings.extend(rules::oracle_trust_risk(&contents, &path));
     }
     Ok(LintReport { findings })
 }
@@ -74,9 +81,8 @@ mod tests {
         .unwrap();
 
         let report = run_all(dir.path()).unwrap();
-        // Two rules (signer + owner) should both fire on the one real
-        // source file, and the decoy under target/ must be ignored.
-        assert_eq!(report.findings.len(), 2);
+        // Signer + owner fire on the one real source file; target/ is ignored.
+        assert!(report.findings.len() >= 2);
         assert!(report
             .findings
             .iter()

@@ -19,6 +19,7 @@
 //! reach Neo4j or trace files.
 
 pub mod schema;
+mod security;
 mod store;
 mod trajectory;
 
@@ -26,6 +27,10 @@ mod trajectory;
 mod neo4j;
 
 pub use schema::{schema_statements, NodeLabel, RelType};
+pub use security::{
+    aggregate_confidence, aggregate_severity, EvidenceRecord, InMemorySecurityStore,
+    MitigationRecord, ScannerRecord, SecurityKnowledge, TargetRecord, VulnerabilityRecord,
+};
 pub use store::{
     new_run_record, new_step_record, ArtifactRecord, InMemoryKnowledgeStore, KnowledgeError,
     KnowledgeResult, KnowledgeStore, RunRecord, RunStatus, StepRecord,

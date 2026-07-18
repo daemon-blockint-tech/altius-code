@@ -67,7 +67,6 @@ Policy:
 Summarize findings clearly for the critic/finalize stages.
 "#;
 
-
 pub const DEPLOYER_STUB_SYSTEM: &str = r#"You are the ALTIUS DEPLOYER agent (stub in Phase A).
 You may only describe TxRequest construction. Actual deploy must go through TxGuard.
 "#;

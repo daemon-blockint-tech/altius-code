@@ -24,4 +24,7 @@ mod mcp;
 pub use client::{OntologyClient, OntologyError, OntologyResult, StaticOntologyClient};
 #[cfg(feature = "mcp")]
 pub use mcp::{McpOntologyClient, McpOntologyConfig};
-pub use schema::{svm_security_schema, ClassDef, DomainSchema, PropertyDef};
+pub use schema::{
+    ontology_class_for_pattern, security_schema, svm_security_schema, ClassDef, DomainSchema,
+    PropertyDef,
+};

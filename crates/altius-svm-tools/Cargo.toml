@@ -9,6 +9,7 @@ repository.workspace = true
 altius-findings = { workspace = true }
 altius-svm-detect = { workspace = true }
 altius-txguard = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }
 regex = { workspace = true }
 solana-loader-v3-interface = { version = "8.0.1", features = ["wincode"] }

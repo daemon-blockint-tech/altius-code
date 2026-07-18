@@ -174,6 +174,12 @@ fn ontology_class_for_rule(rule_id: &str) -> Option<String> {
         "svm-unvalidated-writable-account" => "UnvalidatedWritableAccount",
         "svm-lamports-overflow-risk" => "LamportsOverflowRisk",
         "svm-close-without-zeroing" => "CloseWithoutZeroing",
+        "svm-pda-bump-canonicalization" => "PdaBumpCanonicalization",
+        "svm-sysvar-address-validation" => "SysvarAddressValidation",
+        "svm-account-confusion" => "AccountConfusion",
+        "svm-unchecked-arithmetic" => "UncheckedArithmetic",
+        "svm-remaining-accounts-risk" => "RemainingAccountsRisk",
+        "svm-oracle-trust-risk" => "OracleTrustRisk",
         _ => return None,
     };
     Some(class.into())

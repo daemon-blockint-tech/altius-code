@@ -38,6 +38,11 @@ impl TrajectoryEvent {
             detail: redact_secrets(detail),
         }
     }
+
+    /// Security-scan trajectory marker (still redacted).
+    pub fn security_scan(run_id: RunId, detail: &str) -> Self {
+        Self::new(run_id, "security", "scan", detail)
+    }
 }
 
 /// Append-only JSONL trajectory writer.

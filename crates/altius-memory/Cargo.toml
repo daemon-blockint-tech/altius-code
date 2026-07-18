@@ -12,6 +12,7 @@ neo4j = ["dep:neo4rs", "altius-graph/neo4j"]
 
 [dependencies]
 altius-core = { workspace = true }
+altius-findings = { workspace = true }
 altius-graph = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
