@@ -1,0 +1,26 @@
+[package]
+name = "altius-graph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tokio-based agent graph runtime (LangGraph-inspired, Altius-owned)"
+
+[features]
+default = []
+neo4j = ["dep:neo4rs"]
+
+[dependencies]
+altius-core = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+neo4rs = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

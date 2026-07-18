@@ -20,4 +20,12 @@ pub enum CliError {
     MissingSignerSocket,
     #[error("invalid --cluster value: {0}")]
     InvalidCluster(#[from] altius_svm_detect::ParseClusterError),
+    #[error("{0}")]
+    Message(String),
+}
+
+impl CliError {
+    pub fn message(msg: impl Into<String>) -> Self {
+        Self::Message(msg.into())
+    }
 }

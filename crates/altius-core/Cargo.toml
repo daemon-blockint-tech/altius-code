@@ -1,0 +1,16 @@
+[package]
+name = "altius-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared types for the Altius multi-agent fleet (IDs, budgets, errors, redaction)"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+regex = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

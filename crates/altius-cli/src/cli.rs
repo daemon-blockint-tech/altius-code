@@ -18,6 +18,35 @@ pub enum Command {
     /// in it through the mandatory guardrail pipeline (policy, simulation,
     /// diff, approval, audit log) before broadcasting.
     Deploy(DeployArgs),
+    /// Multi-agent fleet commands (supervisor + specialists).
+    Fleet(FleetArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct FleetArgs {
+    #[command(subcommand)]
+    pub command: FleetCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FleetCommand {
+    /// Run the supervisor graph headlessly against a prompt.
+    Run(FleetRunArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct FleetRunArgs {
+    /// User task for the fleet.
+    #[arg(long)]
+    pub prompt: String,
+
+    /// Project directory the fleet should ground on.
+    #[arg(long, default_value = ".")]
+    pub project: PathBuf,
+
+    /// Use the deterministic offline LLM (no network). Useful for demos and CI.
+    #[arg(long)]
+    pub offline: bool,
 }
 
 #[derive(Debug, Parser)]

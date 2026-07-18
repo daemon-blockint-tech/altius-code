@@ -10,12 +10,17 @@ name = "altius"
 path = "src/main.rs"
 
 [dependencies]
+altius-core = { workspace = true }
+altius-agents = { workspace = true }
 altius-svm-detect = { workspace = true }
 altius-svm-tools = { workspace = true }
 altius-txguard = { workspace = true }
 altius-signer = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 solana-pubkey = "4.2.0"
 solana-rpc-client = "4.1.2"
 
