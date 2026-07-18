@@ -4,10 +4,10 @@ overview: "Build a Rust multi-agent fleet on top of the existing Altius SVM crat
 todos:
   - id: phase-a-core-graph
     content: Add altius-core + altius-graph + supervisor specialists; headless fleet run CLI; MemoryStore trait with in-memory + Neo4j adapters
-    status: in_progress
+    status: completed
   - id: phase-b-protocols
     content: Implement MCP (rmcp), BeeAI ACP run API, Editor ACP module, A2A agent-card/tasks, ANP discovery stubs; optional agent-lsp MCP attach
-    status: pending
+    status: in_progress
   - id: phase-c-payments
     content: Extend TxKind with Payment; build altius-payments x402/MPP adapter through TxGuard + altius-signer
     status: pending
