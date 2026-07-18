@@ -1,6 +1,8 @@
 use altius_svm_detect::Cluster;
-use altius_txguard::TxRequest;
+use solana_hash::Hash;
+use solana_pubkey::Pubkey;
 
+use crate::deploy_plan::DeploymentPlan;
 use crate::error::ToolError;
 use crate::report::{BuildArtifacts, LintReport, TestReport};
 
@@ -15,11 +17,18 @@ pub trait SvmToolchain {
     fn integration_test(&self) -> Result<TestReport, ToolError>;
     fn lint(&self) -> Result<LintReport, ToolError>;
 
-    /// Describes the deploy that *would* happen on `cluster` as a
-    /// [`TxRequest`]. This method never runs `anchor deploy`, `solana
-    /// program deploy`, or anything else that could submit a transaction
-    /// — the only way to actually deploy is to pass the returned request
-    /// through `altius_txguard::TxGuard::submit`, which simulates and
-    /// requires approval first.
-    fn deploy(&self, cluster: Cluster) -> Result<TxRequest, ToolError>;
+    /// Builds the ordered sequence of transactions that *would* deploy
+    /// (or, if `is_upgrade`, redeploy) the program on `cluster` as a
+    /// [`DeploymentPlan`]. This method never runs `anchor deploy`,
+    /// `solana program deploy`, or anything else that could submit a
+    /// transaction — every entry in the plan still has to pass through
+    /// `altius_txguard::TxGuard::submit`, in order, which simulates and
+    /// requires approval before anything is signed and sent.
+    fn deploy(
+        &self,
+        cluster: Cluster,
+        payer: Pubkey,
+        recent_blockhash: Hash,
+        is_upgrade: bool,
+    ) -> Result<DeploymentPlan, ToolError>;
 }

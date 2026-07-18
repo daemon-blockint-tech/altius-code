@@ -7,6 +7,7 @@
 //! for the design this crate implements.
 
 mod anchor;
+mod deploy_plan;
 mod error;
 mod lints;
 mod native;
@@ -16,6 +17,9 @@ pub mod shortcut_guard;
 mod toolchain_trait;
 
 pub use anchor::AnchorToolchain;
+pub use deploy_plan::{
+    build_deployment_plan, load_or_generate_program_keypair, DeploymentPlan, WRITE_CHUNK_SIZE,
+};
 pub use error::ToolError;
 pub use native::CargoBuildSbfToolchain;
 pub use report::{

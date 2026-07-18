@@ -110,12 +110,7 @@ mod tests {
     use super::*;
 
     fn tx(cluster: Cluster, kind: TxKind) -> TxRequest {
-        TxRequest {
-            description: "test tx".into(),
-            cluster,
-            kind,
-            unsigned_transaction: vec![],
-        }
+        TxRequest::new("test tx", cluster, kind, solana_message::Message::default())
     }
 
     #[test]

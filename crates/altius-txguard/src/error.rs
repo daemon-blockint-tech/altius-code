@@ -16,4 +16,8 @@ pub enum GuardError {
     AuditChainBroken { path: String, reason: String },
     #[error("signer error: {0}")]
     Signer(#[from] altius_signer::SignerError),
+    #[error("transaction is missing required signatures from: {}", .0.join(", "))]
+    IncompleteSignatures(Vec<String>),
+    #[error("rpc request to {rpc_url} failed: {reason}")]
+    Rpc { rpc_url: String, reason: String },
 }

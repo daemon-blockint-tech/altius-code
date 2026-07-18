@@ -2,8 +2,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use altius_svm_detect::Cluster;
-use altius_txguard::{TxKind, TxRequest};
+use solana_hash::Hash;
+use solana_pubkey::Pubkey;
 
+use crate::deploy_plan::{build_deployment_plan, load_or_generate_program_keypair, DeploymentPlan};
 use crate::error::ToolError;
 use crate::lints;
 use crate::report::{parse_cargo_test_output, BuildArtifacts, LintReport, TestReport};
@@ -101,25 +103,35 @@ impl SvmToolchain for AnchorToolchain {
         lints::run_all(&self.project_root)
     }
 
-    fn deploy(&self, cluster: Cluster) -> Result<TxRequest, ToolError> {
+    fn deploy(
+        &self,
+        cluster: Cluster,
+        payer: Pubkey,
+        recent_blockhash: Hash,
+        is_upgrade: bool,
+    ) -> Result<DeploymentPlan, ToolError> {
         let artifacts = self.collect_artifacts()?;
         let program_path = artifacts
             .program_paths
             .first()
             .ok_or_else(|| ToolError::NoBuildArtifacts(self.deploy_dir().display().to_string()))?;
 
-        Ok(TxRequest {
-            description: format!("anchor deploy {} to {cluster}", program_path.display()),
+        let program_bytes = fs::read(program_path)?;
+        let program_name = program_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("program");
+        let program_keypair = load_or_generate_program_keypair(&self.deploy_dir(), program_name)?;
+
+        build_deployment_plan(
+            &program_bytes,
+            payer,
+            &program_keypair,
+            program_bytes.len() * 2,
             cluster,
-            kind: TxKind::Deploy,
-            // Placeholder: a full implementation would serialize the
-            // actual BPF Loader Upgradeable write/deploy transaction
-            // referencing this artifact using solana-sdk, which this
-            // crate does not yet depend on (tracked as follow-up work).
-            // Left empty rather than the raw .so bytes so nothing here
-            // implies this is already a real transaction payload.
-            unsigned_transaction: Vec::new(),
-        })
+            recent_blockhash,
+            is_upgrade,
+        )
     }
 }
 
@@ -131,7 +143,14 @@ mod tests {
     fn deploy_fails_clearly_without_prior_build() {
         let dir = tempfile::tempdir().unwrap();
         let toolchain = AnchorToolchain::new(dir.path());
-        let err = toolchain.deploy(Cluster::Devnet).unwrap_err();
+        let err = toolchain
+            .deploy(
+                Cluster::Devnet,
+                Pubkey::new_unique(),
+                Hash::default(),
+                false,
+            )
+            .unwrap_err();
         assert!(matches!(err, ToolError::NoBuildArtifacts(_)));
     }
 
@@ -140,12 +159,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let deploy_dir = dir.path().join("target").join("deploy");
         fs::create_dir_all(&deploy_dir).unwrap();
-        fs::write(deploy_dir.join("my_program.so"), b"not a real elf").unwrap();
+        fs::write(deploy_dir.join("my_program.so"), vec![0u8; 128]).unwrap();
 
         let toolchain = AnchorToolchain::new(dir.path());
-        let tx = toolchain.deploy(Cluster::Devnet).unwrap();
-        assert_eq!(tx.kind, TxKind::Deploy);
-        assert!(tx.description.contains("my_program.so"));
-        assert!(tx.description.contains("devnet"));
+        let payer = Pubkey::new_unique();
+        let plan = toolchain
+            .deploy(Cluster::Devnet, payer, Hash::default(), false)
+            .unwrap();
+
+        assert!(plan.create_buffer.description.contains("buffer"));
+        assert!(plan.finalize.description.contains("devnet"));
+        assert!(!plan.write_chunks.is_empty());
+
+        // Deploying the same program again should reuse the persisted
+        // program keypair rather than minting a new program address.
+        let plan_again = toolchain
+            .deploy(Cluster::Devnet, payer, Hash::default(), true)
+            .unwrap();
+        assert_eq!(plan.program_pubkey, plan_again.program_pubkey);
     }
 }

@@ -73,12 +73,7 @@ mod tests {
     use altius_svm_detect::Cluster;
 
     fn tx(cluster: Cluster, kind: TxKind) -> TxRequest {
-        TxRequest {
-            description: "test".into(),
-            cluster,
-            kind,
-            unsigned_transaction: vec![],
-        }
+        TxRequest::new("test", cluster, kind, solana_message::Message::default())
     }
 
     fn diff() -> DiffReport {
