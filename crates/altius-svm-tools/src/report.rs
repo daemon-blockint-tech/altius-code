@@ -97,17 +97,37 @@ pub struct LintFinding {
     pub severity: Severity,
     pub message: String,
     pub file: PathBuf,
+    /// 1-based line of the primary evidence, when known.
+    pub start_line: Option<u32>,
+    pub end_line: Option<u32>,
+    pub snippet: Option<String>,
+    pub recommendation: Option<String>,
 }
 
 impl LintFinding {
     /// Convert into the canonical multi-chain [`altius_findings::Finding`].
     pub fn to_finding(&self) -> altius_findings::Finding {
-        altius_findings::Finding::from_lint(
+        let mut finding = altius_findings::Finding::from_lint(
             &self.rule_id,
             self.severity == Severity::Error,
             &self.message,
             self.file.display().to_string(),
-        )
+        );
+        finding.location.start_line = self.start_line;
+        finding.location.end_line = self.end_line;
+        finding.location.snippet = self.snippet.clone();
+        if let Some(rec) = &self.recommendation {
+            finding.recommendation = Some(rec.clone());
+        }
+        if let Some(ev) = finding.evidence.first_mut() {
+            ev.start_line = self.start_line;
+            ev.end_line = self.end_line;
+            if self.snippet.is_some() {
+                ev.snippet = self.snippet.clone();
+            }
+        }
+        finding.fingerprint.clear();
+        finding.with_fingerprint()
     }
 }
 

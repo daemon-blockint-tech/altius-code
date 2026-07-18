@@ -7,10 +7,10 @@ todos:
     status: completed
   - id: activate-security-route
     content: Wire the Security agent route, tools, protocol surfaces, offline behavior, and tests
-    status: in_progress
+    status: completed
   - id: deepen-solana-scanning
     content: Implement deeper native Solana rules, evidence spans, tool adapters, and local-only dynamic validation interface
-    status: pending
+    status: in_progress
   - id: persist-security-knowledge
     content: Expand ontology and Neo4j APIs for findings, evidence, scanners, mitigations, and redacted trajectories
     status: pending

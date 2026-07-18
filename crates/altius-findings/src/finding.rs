@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::chain::ChainFamily;
@@ -178,12 +177,6 @@ fn ontology_class_for_rule(rule_id: &str) -> Option<String> {
         _ => return None,
     };
     Some(class.into())
-}
-
-/// Optional metadata stamp for when a finding was first observed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ObservationTime {
-    pub observed_at: DateTime<Utc>,
 }
 
 #[cfg(test)]
