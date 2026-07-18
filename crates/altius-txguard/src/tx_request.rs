@@ -1,4 +1,7 @@
 use altius_svm_detect::Cluster;
+use solana_message::Message;
+use solana_pubkey::Pubkey;
+use solana_signature::Signature;
 
 /// What an on-chain transaction is trying to do, at a level of detail
 /// coarse enough for policy and approval decisions without needing to
@@ -41,19 +44,42 @@ impl TxKind {
 
 /// A candidate transaction that has not been signed and must not be until
 /// it has passed every stage of [`crate::pipeline::TxGuard::submit`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `message` is real, real Solana `solana_message::Message` — the exact
+/// bytes `message.serialize()` produces are what gets signed. Some
+/// transactions need more than one signer (for example, deploying a new
+/// program requires the fresh program/buffer keypairs to sign alongside
+/// the wallet): those are provided in `extra_signatures`, obtained by
+/// signing locally with keypairs this process holds in memory only for
+/// the lifetime of building the request. They are never the wallet key —
+/// the wallet's signature is the one thing `TxGuard::submit` obtains
+/// through the isolated `altius-signer`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct TxRequest {
     /// Human-readable summary shown in approval prompts and audit logs.
     pub description: String,
     pub cluster: Cluster,
     pub kind: TxKind,
-    /// Opaque unsigned transaction bytes. A full implementation would
-    /// carry a serialized Solana `Transaction`/`VersionedTransaction`
-    /// here; this crate treats it as an opaque payload to sign so the
-    /// guardrail pipeline can be built and tested ahead of wiring in
-    /// `solana-sdk` transaction construction (tracked as follow-up work
-    /// in `altius-svm-tools`).
-    pub unsigned_transaction: Vec<u8>,
+    pub message: Message,
+    pub extra_signatures: Vec<(Pubkey, Signature)>,
+}
+
+impl TxRequest {
+    /// Convenience constructor for the common case of no extra signers.
+    pub fn new(
+        description: impl Into<String>,
+        cluster: Cluster,
+        kind: TxKind,
+        message: Message,
+    ) -> TxRequest {
+        TxRequest {
+            description: description.into(),
+            cluster,
+            kind,
+            message,
+            extra_signatures: Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]

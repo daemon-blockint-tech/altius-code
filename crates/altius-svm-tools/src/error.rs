@@ -19,4 +19,8 @@ pub enum ToolError {
     NoBuildArtifacts(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("failed to build a loader instruction: {0}")]
+    InstructionBuild(String),
+    #[error("failed to read or generate a program keypair: {0}")]
+    Keypair(String),
 }

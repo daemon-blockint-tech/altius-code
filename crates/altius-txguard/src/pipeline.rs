@@ -1,4 +1,7 @@
 use altius_signer::SignerClient;
+use solana_pubkey::Pubkey;
+use solana_signature::Signature;
+use solana_transaction::Transaction as SolanaTransaction;
 
 use crate::approval::{ApprovalChannel, ApprovalDecision};
 use crate::audit_log::{AuditEntry, AuditLogger};
@@ -6,14 +9,17 @@ use crate::diff::DiffReport;
 use crate::error::GuardError;
 use crate::policy::{PolicyConfig, PolicyDecision};
 use crate::simulate::Simulator;
+use crate::tx_assembly::assemble_signed_transaction;
 use crate::tx_request::TxRequest;
 
 /// What happened to a transaction that made it all the way through
 /// [`TxGuard::submit`] and was approved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TxOutcome {
-    /// Approved and signed by the wired [`SignerClient`].
-    Signed { signature: altius_signer::Signature },
+    /// Approved and fully signed — every required signer (the wallet, via
+    /// the isolated [`SignerClient`], plus any `extra_signatures` the
+    /// request already carried) is present, ready to submit as-is.
+    Signed { transaction: SolanaTransaction },
     /// Approved, but no signer was configured on this `TxGuard` — useful
     /// for dry runs and tests that only want to exercise policy,
     /// simulation, and approval.
@@ -107,9 +113,18 @@ impl<Sim: Simulator, App: ApprovalChannel> TxGuard<Sim, App> {
             ApprovalDecision::Denied { reason } => format!("denied: {reason}"),
         };
 
-        let signature = if approved {
+        let signed_transaction = if approved {
             match &self.signer {
-                Some(signer) => Some(signer.sign(&tx.unsigned_transaction)?),
+                Some(signer) => {
+                    let wallet_pubkey = signer.pubkey()?;
+                    let wallet_signature = signer.sign(&tx.message.serialize())?;
+                    let transaction = assemble_signed_transaction(
+                        &tx,
+                        Pubkey::from(wallet_pubkey.0),
+                        Signature::from(wallet_signature.0),
+                    )?;
+                    Some(transaction)
+                }
                 None => None,
             }
         } else {
@@ -125,15 +140,18 @@ impl<Sim: Simulator, App: ApprovalChannel> TxGuard<Sim, App> {
             format!("{policy_decision:?}"),
             Some(true),
             approval_summary.clone(),
-            signature.as_ref().map(|s| s.to_string()),
+            signed_transaction
+                .as_ref()
+                .and_then(|t| t.signatures.last())
+                .map(|s| s.to_string()),
         ))?;
 
         if !approved {
             return Err(GuardError::ApprovalDenied(approval_summary));
         }
 
-        Ok(match signature {
-            Some(signature) => TxOutcome::Signed { signature },
+        Ok(match signed_transaction {
+            Some(transaction) => TxOutcome::Signed { transaction },
             None => TxOutcome::ApprovedNoSigner,
         })
     }

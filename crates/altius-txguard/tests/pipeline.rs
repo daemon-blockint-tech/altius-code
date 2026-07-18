@@ -18,6 +18,9 @@ use altius_txguard::{
 use ed25519_dalek::{SigningKey, Verifier};
 use rand::rngs::SysRng;
 use rand_core::UnwrapErr;
+use solana_instruction::{AccountMeta, Instruction};
+use solana_message::Message;
+use solana_pubkey::Pubkey;
 
 /// Wraps another `Simulator` and counts how many times `simulate` was
 /// actually invoked, so tests can prove a rejected-at-policy transaction
@@ -34,15 +37,21 @@ impl<S: Simulator> Simulator for CountingSimulator<S> {
     }
 }
 
-fn benign_invoke(cluster: Cluster) -> TxRequest {
-    TxRequest {
-        description: "call the ping instruction".to_string(),
+/// A real, single-instruction message: `payer` signs and is the only
+/// account touched, invoking a throwaway program id.
+fn benign_invoke(cluster: Cluster, payer: Pubkey) -> TxRequest {
+    let program_id = Pubkey::new_unique();
+    let instruction =
+        Instruction::new_with_bytes(program_id, &[], vec![AccountMeta::new(payer, true)]);
+    let message = Message::new(&[instruction], Some(&payer));
+    TxRequest::new(
+        "call the ping instruction",
         cluster,
-        kind: TxKind::Invoke {
+        TxKind::Invoke {
             instruction_name: "ping".to_string(),
         },
-        unsigned_transaction: b"unsigned-tx-bytes".to_vec(),
-    }
+        message,
+    )
 }
 
 #[test]
@@ -57,7 +66,9 @@ fn benign_devnet_invoke_is_approved_without_a_signer() {
         altius_txguard::AuditLogger::open(&audit_path).unwrap(),
     );
 
-    let outcome = guard.submit(benign_invoke(Cluster::Devnet)).unwrap();
+    let outcome = guard
+        .submit(benign_invoke(Cluster::Devnet, Pubkey::new_unique()))
+        .unwrap();
     assert_eq!(outcome, TxOutcome::ApprovedNoSigner);
     verify_chain(&audit_path).unwrap();
     assert_eq!(count_entries(&audit_path), 1);
@@ -80,7 +91,9 @@ fn policy_rejection_never_reaches_simulation() {
     );
 
     // Testnet is not in the default allowed_clusters list.
-    let err = guard.submit(benign_invoke(Cluster::Testnet)).unwrap_err();
+    let err = guard
+        .submit(benign_invoke(Cluster::Testnet, Pubkey::new_unique()))
+        .unwrap_err();
     assert!(matches!(err, GuardError::PolicyRejected(_)));
     assert_eq!(
         calls.load(Ordering::SeqCst),
@@ -103,7 +116,9 @@ fn failed_simulation_blocks_approval_and_signing() {
         altius_txguard::AuditLogger::open(&audit_path).unwrap(),
     );
 
-    let err = guard.submit(benign_invoke(Cluster::Devnet)).unwrap_err();
+    let err = guard
+        .submit(benign_invoke(Cluster::Devnet, Pubkey::new_unique()))
+        .unwrap_err();
     assert!(matches!(err, GuardError::SimulationFailed(reason) if reason == "insufficient funds"));
     verify_chain(&audit_path).unwrap();
 }
@@ -126,12 +141,18 @@ fn mainnet_is_denied_even_with_auto_approve_wired() {
         altius_txguard::AuditLogger::open(&audit_path).unwrap(),
     );
 
-    let tx = TxRequest {
-        description: "upgrade the program".to_string(),
-        cluster: Cluster::MainnetBeta,
-        kind: TxKind::Upgrade,
-        unsigned_transaction: b"unsigned-upgrade-tx".to_vec(),
-    };
+    let payer = Pubkey::new_unique();
+    let program_id = Pubkey::new_unique();
+    let instruction =
+        Instruction::new_with_bytes(program_id, &[], vec![AccountMeta::new(payer, true)]);
+    let message = Message::new(&[instruction], Some(&payer));
+    let tx = TxRequest::new(
+        "upgrade the program",
+        Cluster::MainnetBeta,
+        TxKind::Upgrade,
+        message,
+    );
+
     let err = guard.submit(tx).unwrap_err();
     assert!(matches!(err, GuardError::ApprovalDenied(_)));
     verify_chain(&audit_path).unwrap();
@@ -149,14 +170,17 @@ fn headless_fail_closed_denies_even_a_benign_devnet_transaction() {
         altius_txguard::AuditLogger::open(&audit_path).unwrap(),
     );
 
-    let err = guard.submit(benign_invoke(Cluster::Devnet)).unwrap_err();
+    let err = guard
+        .submit(benign_invoke(Cluster::Devnet, Pubkey::new_unique()))
+        .unwrap_err();
     assert!(matches!(err, GuardError::ApprovalDenied(_)));
 }
 
 /// Full happy path with a real signer process on the other end of a Unix
 /// socket: policy continues, simulation succeeds, AutoApprove approves a
-/// benign devnet invoke, and the returned signature verifies against the
-/// signer's public key over the exact bytes that were submitted.
+/// benign devnet invoke, and the assembled `Transaction`'s signature
+/// verifies against the signer's public key over the exact message bytes
+/// that were signed.
 #[test]
 fn approved_transaction_is_actually_signed_by_the_isolated_signer() {
     let dir = tempfile::tempdir().unwrap();
@@ -187,16 +211,25 @@ fn approved_transaction_is_actually_signed_by_the_isolated_signer() {
     )
     .with_signer(SignerClient::new(&socket_path));
 
-    let tx = benign_invoke(Cluster::Devnet);
-    let unsigned_bytes = tx.unsigned_transaction.clone();
+    let payer = Pubkey::from(expected_pubkey.0);
+    let tx = benign_invoke(Cluster::Devnet, payer);
+    let message_bytes = tx.message.serialize();
     let outcome = guard.submit(tx).unwrap();
 
-    let TxOutcome::Signed { signature } = outcome else {
+    let TxOutcome::Signed { transaction } = outcome else {
         panic!("expected a signed outcome, got {outcome:?}");
     };
+    let signer_index = transaction
+        .message
+        .signer_keys()
+        .iter()
+        .position(|k| **k == payer)
+        .expect("payer must be a signer");
+    let signature = transaction.signatures[signer_index];
+
     let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&expected_pubkey.0).unwrap();
-    let dalek_sig = ed25519_dalek::Signature::from_bytes(&signature.0);
-    assert!(verifying_key.verify(&unsigned_bytes, &dalek_sig).is_ok());
+    let dalek_sig = ed25519_dalek::Signature::from_bytes(&signature.into());
+    assert!(verifying_key.verify(&message_bytes, &dalek_sig).is_ok());
 
     verify_chain(&audit_path).unwrap();
 }

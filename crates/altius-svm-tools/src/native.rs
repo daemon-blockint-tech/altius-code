@@ -2,8 +2,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use altius_svm_detect::Cluster;
-use altius_txguard::{TxKind, TxRequest};
+use solana_hash::Hash;
+use solana_pubkey::Pubkey;
 
+use crate::deploy_plan::{build_deployment_plan, load_or_generate_program_keypair, DeploymentPlan};
 use crate::error::ToolError;
 use crate::lints;
 use crate::report::{parse_cargo_test_output, BuildArtifacts, LintReport, TestReport};
@@ -88,21 +90,35 @@ impl SvmToolchain for CargoBuildSbfToolchain {
         lints::run_all(&self.project_root)
     }
 
-    fn deploy(&self, cluster: Cluster) -> Result<TxRequest, ToolError> {
+    fn deploy(
+        &self,
+        cluster: Cluster,
+        payer: Pubkey,
+        recent_blockhash: Hash,
+        is_upgrade: bool,
+    ) -> Result<DeploymentPlan, ToolError> {
         let artifacts = self.collect_artifacts()?;
         let program_path = artifacts
             .program_paths
             .first()
             .ok_or_else(|| ToolError::NoBuildArtifacts(self.deploy_dir().display().to_string()))?;
 
-        Ok(TxRequest {
-            description: format!("deploy {} to {cluster}", program_path.display()),
+        let program_bytes = fs::read(program_path)?;
+        let program_name = program_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("program");
+        let program_keypair = load_or_generate_program_keypair(&self.deploy_dir(), program_name)?;
+
+        build_deployment_plan(
+            &program_bytes,
+            payer,
+            &program_keypair,
+            program_bytes.len() * 2,
             cluster,
-            kind: TxKind::Deploy,
-            // See the same note in anchor.rs: a real transaction payload
-            // is follow-up work once solana-sdk is wired in.
-            unsigned_transaction: Vec::new(),
-        })
+            recent_blockhash,
+            is_upgrade,
+        )
     }
 }
 
@@ -114,7 +130,14 @@ mod tests {
     fn deploy_fails_clearly_without_prior_build() {
         let dir = tempfile::tempdir().unwrap();
         let toolchain = CargoBuildSbfToolchain::new(dir.path());
-        let err = toolchain.deploy(Cluster::Devnet).unwrap_err();
+        let err = toolchain
+            .deploy(
+                Cluster::Devnet,
+                Pubkey::new_unique(),
+                Hash::default(),
+                false,
+            )
+            .unwrap_err();
         assert!(matches!(err, ToolError::NoBuildArtifacts(_)));
     }
 
@@ -123,11 +146,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let deploy_dir = dir.path().join("target").join("deploy");
         fs::create_dir_all(&deploy_dir).unwrap();
-        fs::write(deploy_dir.join("native_program.so"), b"not a real elf").unwrap();
+        fs::write(deploy_dir.join("native_program.so"), vec![0u8; 64]).unwrap();
 
         let toolchain = CargoBuildSbfToolchain::new(dir.path());
-        let tx = toolchain.deploy(Cluster::Localnet).unwrap();
-        assert_eq!(tx.kind, TxKind::Deploy);
-        assert!(tx.description.contains("native_program.so"));
+        let plan = toolchain
+            .deploy(
+                Cluster::Localnet,
+                Pubkey::new_unique(),
+                Hash::default(),
+                false,
+            )
+            .unwrap();
+        assert!(plan.finalize.description.contains("localnet"));
+        assert_eq!(plan.write_chunks.len(), 1);
     }
 }
