@@ -191,6 +191,11 @@ and awaiting-approval resume.
 
 ## 7. Security invariants (non-negotiable)
 
+The centralized
+[`Security threat model and trust boundaries`](../SECURITY_THREAT_MODEL.md)
+defines deployment assumptions, monitoring/incident-response guidance, and
+simulation-to-sign drift, blockhash-expiry, and replay limitations.
+
 - No private keys in model context; the signer API stays `Pubkey`/`Sign`.
 - No path to broadcast without `TxGuard::submit`; `altius-payments` has no
   signer access of its own.

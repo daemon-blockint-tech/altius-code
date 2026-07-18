@@ -74,6 +74,17 @@ task delegation endpoint (`altius fleet a2a`). See
 [`docs/specs/FLEET_ARCHITECTURE.md`](docs/specs/FLEET_ARCHITECTURE.md) for the
 full architecture.
 
+## Security and verification
+
+The centralized
+[`security threat model`](docs/SECURITY_THREAT_MODEL.md) documents signer
+isolation, TxGuard and tool/WASM trust boundaries, simulation-to-sign
+limitations, monitoring, incident response, and security terminology.
+
+Security boundary fuzz targets live under [`fuzz/`](fuzz/README.md). They use
+real `cargo-fuzz`/libFuzzer harnesses and are intentionally isolated from stable
+workspace builds.
+
 ## Status
 
 Altius Code is under active development. Installation instructions, full

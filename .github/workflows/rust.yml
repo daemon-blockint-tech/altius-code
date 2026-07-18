@@ -17,10 +17,30 @@ jobs:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
     - name: Check formatting
       run: cargo fmt --all -- --check
+    - name: Clippy
+      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
     - name: Build
       run: cargo build --workspace --verbose
     - name: Run tests
       run: cargo test --workspace --verbose
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+    # Pin to actions/checkout v4.2.2
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+    - name: Install LLVM coverage tools
+      run: |
+        rustup component add llvm-tools-preview
+        cargo install cargo-llvm-cov --version 0.8.7 --locked
+    - name: Enforce money-path line coverage
+      run: >-
+        cargo llvm-cov --locked
+        --package altius-txguard
+        --package altius-signer
+        --package altius-payments
+        --all-features
+        --fail-under-lines 80
 
   neo4j:
     # Feature-gated Neo4j path: compile the neo4j features and run the
