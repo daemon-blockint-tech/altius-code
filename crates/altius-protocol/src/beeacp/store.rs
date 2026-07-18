@@ -73,7 +73,7 @@ impl RunStore for InMemoryRunStore {
 
     async fn list(&self) -> Result<Vec<Run>> {
         let mut runs: Vec<Run> = self.runs.read().await.values().cloned().collect();
-        runs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        runs.sort_by_key(|run| std::cmp::Reverse(run.created_at));
         Ok(runs)
     }
 

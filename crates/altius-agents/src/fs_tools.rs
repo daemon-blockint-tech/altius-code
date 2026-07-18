@@ -264,7 +264,7 @@ pub fn run_command(
     } else {
         allowlist.iter().map(String::as_str).collect()
     };
-    if !allowed.iter().any(|name| *name == binary) {
+    if !allowed.contains(&binary) {
         return Err(format!("binary `{binary}` is not on the command allowlist"));
     }
     if binary == "git" {
@@ -275,10 +275,8 @@ pub fn run_command(
             ));
         }
     }
-    if binary == "solana" {
-        if argv.iter().any(|a| a.contains("keygen") || a == "transfer") {
-            return Err("solana keygen/transfer commands are forbidden".into());
-        }
+    if binary == "solana" && argv.iter().any(|a| a.contains("keygen") || a == "transfer") {
+        return Err("solana keygen/transfer commands are forbidden".into());
     }
 
     let root = canonicalize_root(project_root)?;

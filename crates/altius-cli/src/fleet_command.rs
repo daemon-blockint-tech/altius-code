@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use altius_agents::{run_supervisor, LlmClient, OfflineLlmClient, OpenAiCompatibleClient};
+use altius_agents::{
+    parse_slash_skill, run_supervisor_outcome_for, LlmClient, OfflineLlmClient,
+    OpenAiCompatibleClient, SupervisorOptions, SupervisorOutcome,
+};
 use altius_core::redact_secrets;
 
 use crate::cli::{FleetMcpArgs, FleetRunArgs, McpTransport};
@@ -34,11 +37,38 @@ pub fn run_fleet_cmd(args: &FleetRunArgs) -> Result<(), CliError> {
             Arc::new(OfflineLlmClient)
         };
 
-        let grounded = format!("{prompt}\n\n[project_path={project}]");
+        // Slash skills (/scan, /browser, /audit, /pay) force a specialist route.
+        let (agent_name, prompt_body) = if let Some(skill) = parse_slash_skill(&prompt) {
+            let body = if skill.remainder.is_empty() {
+                prompt.clone()
+            } else {
+                skill.remainder
+            };
+            (
+                Some(altius_agents::agent_name_for_route(skill.route).to_owned()),
+                body,
+            )
+        } else {
+            (None, prompt.clone())
+        };
 
-        let (run_id, state) = run_supervisor(llm, grounded)
+        let grounded = format!("{prompt_body}\n\n[project_path={project}]");
+        let options = SupervisorOptions {
+            agent_name,
+            ..SupervisorOptions::default()
+        };
+
+        let (run_id, outcome) = run_supervisor_outcome_for(llm, grounded, options)
             .await
             .map_err(|e| CliError::message(format!("fleet run failed: {e}")))?;
+        let state = match outcome {
+            SupervisorOutcome::Finished(state) => state,
+            SupervisorOutcome::Awaiting { reason, .. } => {
+                return Err(CliError::message(format!(
+                    "fleet run awaiting HITL: {reason}"
+                )));
+            }
+        };
 
         let answer = state.final_answer.as_deref().unwrap_or("(no final answer)");
         let safe = redact_secrets(answer);

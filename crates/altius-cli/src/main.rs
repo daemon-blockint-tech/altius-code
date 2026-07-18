@@ -5,6 +5,7 @@ mod detect_command;
 mod error;
 mod eval_command;
 mod fleet_command;
+mod plugin;
 mod rpc_endpoint;
 mod scan_command;
 mod serve_command;

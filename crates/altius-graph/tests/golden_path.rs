@@ -65,7 +65,7 @@ async fn golden_path_router_workers_join_finish() {
             s.value += 1000;
             NodeResult::Continue(s)
         }))
-        .add_node(NamedFn::new("finalize", |s| NodeResult::Finish(s)))
+        .add_node(NamedFn::new("finalize", NodeResult::Finish))
         .set_entry("router")
         .add_fanout_join(
             "router",
@@ -115,7 +115,7 @@ async fn golden_path_router_workers_join_finish() {
 #[tokio::test]
 async fn hitl_interrupt_and_resume() {
     let graph = GraphBuilder::new()
-        .add_node(NamedFn::new("prepare", |s| NodeResult::Continue(s)))
+        .add_node(NamedFn::new("prepare", NodeResult::Continue))
         .add_node(NamedFn::new("approve", |s| {
             if s.approved {
                 NodeResult::Continue(s)
@@ -194,7 +194,7 @@ async fn memory_store_checkpointer_roundtrip() {
 #[tokio::test]
 async fn conditional_edge_routes() {
     let graph = GraphBuilder::new()
-        .add_node(NamedFn::new("start", |s| NodeResult::Continue(s)))
+        .add_node(NamedFn::new("start", NodeResult::Continue))
         .add_node(NamedFn::new("left", |mut s| {
             s.value = 1;
             NodeResult::Finish(s)

@@ -217,11 +217,12 @@ simulation-to-sign drift, blockhash-expiry, and replay limitations.
   `network` (today those capabilities are recorded but unused — guests
   get no imports).
 - SPL-token x402 settlement.
-- Skills loader (`.altius/skills`), context compaction, plugin marketplace.
+- Richer skills loader (`.altius/skills` packs), context compaction, and
+  a general plugin marketplace (v0 packs are install-by-path only).
 - Eval harness; adversarial prompt-injection fixtures only if explicitly
   enabled (no third-party leaked prompts, ever).
-- Mobile-facing auth (bearer), SSE/push notifications, and durable
-  Neo4j-backed `RunStore` for remote phone clients.
+- Optional Neo4j-backed `RunStore` (SQLite is the durable default today);
+  push notifications beyond SSE.
 
 ### Done in this layer (no longer stubs)
 
@@ -237,3 +238,12 @@ simulation-to-sign drift, blockhash-expiry, and replay limitations.
   `wasmtime`); guest ABI `memory` + `alloc` + `run`, no host imports.
 - Harness Phase A: sandboxed FS/`run_command` tools, Pre/PostToolUse hooks,
   FailClosed `[tools]` permissions, `.altius.md` project memory.
+- Remote fleet (P0): SQLite `RunStore`, bearer/`?token=` auth, async
+  `POST /runs` + `GET /runs/{id}/events` SSE, checkpoint-backed
+  awaiting→resume HITL.
+- Slash skills v0: `/scan`, `/audit`, `/browser`, `/pay` force routes in
+  CLI, BeeACP, and PWA.
+- Plugin pack v0: JSON manifest (`examples/plugins/web3-starter.json`)
+  via `fleet serve --plugin` / `ALTIUS_FLEET_PLUGIN`.
+- CI scan surface: `altius scan --format sarif --fail-on-findings`
+  (GitHub Actions `scan` job).

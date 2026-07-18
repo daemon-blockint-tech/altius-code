@@ -34,7 +34,7 @@ fn walk(
             }
             walk(&path, depth + 1, max_depth, extensions, out)?;
         } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if extensions.iter().any(|wanted| *wanted == ext) {
+            if extensions.contains(&ext) {
                 out.push(path);
             }
         }

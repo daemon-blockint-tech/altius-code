@@ -10,6 +10,7 @@ mod permissions;
 mod project_memory;
 mod prompts;
 mod roles;
+mod skills;
 mod supervisor;
 mod tools;
 
@@ -21,6 +22,7 @@ pub use llm::{
 pub use permissions::{PermissionedDispatcher, ToolDecision, ToolPolicy};
 pub use project_memory::{format_for_system as format_project_memory, load as load_project_memory};
 pub use roles::{stub_roles, AgentRole};
+pub use skills::{agent_name_for_route, known_skills, parse_slash_skill, SlashSkill};
 pub use supervisor::{
     build_supervisor_graph, build_supervisor_graph_with, resolve_forced_route, run_supervisor,
     run_supervisor_offline, run_supervisor_outcome, run_supervisor_outcome_for,

@@ -35,12 +35,39 @@ jobs:
         cargo install cargo-llvm-cov --version 0.8.7 --locked
     - name: Enforce money-path line coverage
       run: >-
-        cargo llvm-cov --locked
+        cargo llvm-cov
         --package altius-txguard
         --package altius-signer
         --package altius-payments
         --all-features
         --fail-under-lines 80
+
+  scan:
+    # altius scan SARIF gate (plugin-pack / CI surface). Scans a clean
+    # fixture so the job stays green; --fail-on-findings trips on High/Critical.
+    runs-on: ubuntu-latest
+    steps:
+    # Pin to actions/checkout v4.2.2
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+    - name: Build altius CLI
+      run: cargo build -p altius-cli --release
+    - name: Scan fixture (SARIF)
+      run: |
+        mkdir -p testdata/scan-clean
+        ./target/release/altius scan \
+          --path testdata/scan-clean \
+          --chain auto \
+          --format sarif \
+          --fail-on-findings \
+          > altius-scan.sarif
+    - name: Upload SARIF
+      if: always()
+      # Pin to actions/upload-artifact v4.6.0
+      uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+      with:
+        name: altius-scan-sarif
+        path: altius-scan.sarif
+        if-no-files-found: warn
 
   neo4j:
     # Feature-gated Neo4j path: compile the neo4j features and run the

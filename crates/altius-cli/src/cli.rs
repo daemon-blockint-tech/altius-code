@@ -138,6 +138,11 @@ pub struct FleetServeArgs {
     /// directory is available).
     #[arg(long, env = "ALTIUS_FLEET_RUN_DB")]
     pub run_db: Option<PathBuf>,
+
+    /// Optional plugin pack JSON (skills + MCP attach configs). See
+    /// `examples/plugins/web3-starter.json`.
+    #[arg(long, env = "ALTIUS_FLEET_PLUGIN")]
+    pub plugin: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]

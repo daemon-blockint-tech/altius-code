@@ -37,30 +37,28 @@ impl Scanner for AlgorandScanner {
             if !is_pyteal && !is_teal {
                 continue;
             }
-            if contents.contains("RekeyTo")
+            if (contents.contains("RekeyTo")
                 || contents.contains("rekey_to")
-                || contents.contains("CloseRemainderTo")
+                || contents.contains("CloseRemainderTo"))
+                && !contents.contains("Global.ZeroAddress")
+                && !contents.contains("Txn.RekeyTo")
+                && !contents.contains("==")
             {
-                if !contents.contains("Global.ZeroAddress")
-                    && !contents.contains("Txn.RekeyTo")
-                    && !contents.contains("==")
-                {
-                    report.push(finding(
-                        "algorand-rekey-risk",
-                        Severity::High,
-                        "Rekey/close field risk",
-                        "transaction rekey/close fields referenced without zero-address guard",
-                        &file,
-                        &contents,
-                        if contents.contains("rekey_to") {
-                            "rekey_to"
-                        } else if contents.contains("RekeyTo") {
-                            "RekeyTo"
-                        } else {
-                            "CloseRemainderTo"
-                        },
-                    ));
-                }
+                report.push(finding(
+                    "algorand-rekey-risk",
+                    Severity::High,
+                    "Rekey/close field risk",
+                    "transaction rekey/close fields referenced without zero-address guard",
+                    &file,
+                    &contents,
+                    if contents.contains("rekey_to") {
+                        "rekey_to"
+                    } else if contents.contains("RekeyTo") {
+                        "RekeyTo"
+                    } else {
+                        "CloseRemainderTo"
+                    },
+                ));
             }
             if (contents.contains("GroupSize") || contents.contains("group_size"))
                 && !contents.contains("==")

@@ -30,19 +30,20 @@ impl Scanner for EvmScanner {
             let contents =
                 fs::read_to_string(&path).map_err(|e| ScannerError::Io(e.to_string()))?;
             let file = path.display().to_string();
-            if contents.contains(".call{") || contents.contains(".call(") {
-                if !contents.contains("require(") && !contents.contains("success") {
-                    report.push(make(
-                        "evm-unchecked-call",
-                        Severity::High,
-                        "Unchecked low-level call",
-                        "low-level call without visible success check",
-                        &file,
-                        &contents,
-                        ".call",
-                        "EvmUncheckedCall",
-                    ));
-                }
+            if (contents.contains(".call{") || contents.contains(".call("))
+                && !contents.contains("require(")
+                && !contents.contains("success")
+            {
+                report.push(make(
+                    "evm-unchecked-call",
+                    Severity::High,
+                    "Unchecked low-level call",
+                    "low-level call without visible success check",
+                    &file,
+                    &contents,
+                    ".call",
+                    "EvmUncheckedCall",
+                ));
             }
             if (contents.contains("call.value") || contents.contains(".call{value:"))
                 && contents.contains("balances[")
@@ -92,6 +93,7 @@ impl Scanner for EvmScanner {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn make(
     pattern_id: &str,
     severity: Severity,

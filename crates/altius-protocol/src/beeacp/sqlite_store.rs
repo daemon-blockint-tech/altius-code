@@ -40,8 +40,9 @@ impl SqliteRunStore {
                 })?;
             }
         }
-        let conn = Connection::open(path)
-            .map_err(|e| ProtocolError::Internal(format!("open run db `{}`: {e}", path.display())))?;
+        let conn = Connection::open(path).map_err(|e| {
+            ProtocolError::Internal(format!("open run db `{}`: {e}", path.display()))
+        })?;
         Self::from_connection(conn)
     }
 
@@ -92,7 +93,18 @@ fn datetime_from_rfc3339(raw: &str) -> Result<DateTime<Utc>> {
         .map_err(|e| ProtocolError::Internal(format!("corrupt timestamp `{raw}` in db: {e}")))
 }
 
-fn run_from_row(row: &Row<'_>) -> rusqlite::Result<(String, String, String, String, String, Option<String>, String, Option<String>)> {
+type StoredRunRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+);
+
+fn run_from_row(row: &Row<'_>) -> rusqlite::Result<StoredRunRow> {
     Ok((
         row.get(0)?,
         row.get(1)?,
@@ -106,16 +118,7 @@ fn run_from_row(row: &Row<'_>) -> rusqlite::Result<(String, String, String, Stri
 }
 
 fn decode_run(
-    (run_id, agent_name, status, input_json, output_json, error, created_at, finished_at): (
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-    ),
+    (run_id, agent_name, status, input_json, output_json, error, created_at, finished_at): StoredRunRow,
 ) -> Result<Run> {
     Ok(Run {
         run_id: run_id
@@ -127,7 +130,10 @@ fn decode_run(
         output: messages_from_json(&output_json)?,
         error,
         created_at: datetime_from_rfc3339(&created_at)?,
-        finished_at: finished_at.as_deref().map(datetime_from_rfc3339).transpose()?,
+        finished_at: finished_at
+            .as_deref()
+            .map(datetime_from_rfc3339)
+            .transpose()?,
     })
 }
 

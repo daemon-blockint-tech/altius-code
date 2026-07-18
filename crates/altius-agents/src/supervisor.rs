@@ -122,7 +122,7 @@ impl FleetState {
     }
 }
 
-/// Map an agent name / `@Browser` / `@Security` mention onto a forced route.
+/// Map an agent name / `@Browser` / `@Security` / slash skill onto a forced route.
 pub fn resolve_forced_route(agent_name: Option<&str>, prompt: &str) -> Option<FleetRoute> {
     if let Some(name) = agent_name {
         let lower = name.trim().trim_start_matches('@').to_ascii_lowercase();
@@ -132,6 +132,9 @@ pub fn resolve_forced_route(agent_name: Option<&str>, prompt: &str) -> Option<Fl
         if lower == "browser" {
             return Some(FleetRoute::Browser);
         }
+    }
+    if let Some(skill) = crate::skills::parse_slash_skill(prompt) {
+        return Some(skill.route);
     }
     let prompt_lower = prompt.to_ascii_lowercase();
     if prompt_lower.contains("@security") {

@@ -1,6 +1,8 @@
 /target
 **/target
 Cargo.lock
+/fuzz/artifacts/
+/fuzz/corpus/
 .altius/
 *.pem
 *.key

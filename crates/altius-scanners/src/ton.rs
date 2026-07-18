@@ -44,20 +44,20 @@ impl Scanner for TonScanner {
                     "sender",
                 ));
             }
-            if contents.contains("transfer_notification")
-                || (contents.contains("jetton") && contents.contains("op::"))
+            if (contents.contains("transfer_notification")
+                || (contents.contains("jetton") && contents.contains("op::")))
+                && !contents.contains("sender()")
+                && !contents.contains("msg.sender")
             {
-                if !contents.contains("sender()") && !contents.contains("msg.sender") {
-                    report.push(finding(
-                        "ton-sender-check",
-                        Severity::Medium,
-                        "Jetton notification trust",
-                        "jetton/transfer notification path without sender authentication",
-                        &file,
-                        &contents,
-                        "jetton",
-                    ));
-                }
+                report.push(finding(
+                    "ton-sender-check",
+                    Severity::Medium,
+                    "Jetton notification trust",
+                    "jetton/transfer notification path without sender authentication",
+                    &file,
+                    &contents,
+                    "jetton",
+                ));
             }
         }
         Ok(report)

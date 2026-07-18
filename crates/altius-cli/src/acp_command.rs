@@ -170,8 +170,8 @@ async fn run_prompt(offline: bool, params: &PromptParams) -> Result<PromptResult
     let prompt = params
         .prompt
         .iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text.as_str()),
+        .map(|block| match block {
+            ContentBlock::Text { text } => text.as_str(),
         })
         .collect::<Vec<_>>()
         .join("\n");

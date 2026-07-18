@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use altius_agents::{
-    build_supervisor_graph_with, run_supervisor_outcome_with_options, BrowserTooling, FleetState,
-    LlmClient, McpTools, OfflineLlmClient, OpenAiCompatibleClient, SupervisorOptions,
-    SupervisorOutcome,
+    agent_name_for_route, build_supervisor_graph_with, parse_slash_skill,
+    run_supervisor_outcome_with_options, BrowserTooling, FleetState, LlmClient, McpTools,
+    OfflineLlmClient, OpenAiCompatibleClient, SupervisorOptions, SupervisorOutcome,
 };
 use altius_core::{Budget, RunId};
 use altius_graph::{Checkpointer, ExecutionOutcome, GraphExecutor, InMemoryCheckpointer};
@@ -66,11 +66,20 @@ impl FleetRunExecutor {
         let llm = llm_client(self.offline)?;
         let checkpointer: Arc<dyn Checkpointer<FleetState>> =
             Arc::clone(&self.checkpointer) as Arc<dyn Checkpointer<FleetState>>;
-        match run_supervisor_outcome_with_options(llm, checkpointer, fleet_budget(), prompt, options)
-            .await
+        match run_supervisor_outcome_with_options(
+            llm,
+            checkpointer,
+            fleet_budget(),
+            prompt,
+            options,
+        )
+        .await
         {
             Ok((graph_run_id, outcome)) => {
-                self.graph_runs.write().await.insert(bee_run_id, graph_run_id);
+                self.graph_runs
+                    .write()
+                    .await
+                    .insert(bee_run_id, graph_run_id);
                 Ok(supervisor_outcome_to_run_outcome(outcome))
             }
             Err(error) => Ok(RunOutcome::Failed(error.to_string())),
@@ -115,9 +124,7 @@ impl FleetRunExecutor {
             .resume(graph_run_id, checkpoint.node, state, 0)
             .await
         {
-            Ok(ExecutionOutcome::Finished { state, .. }) => {
-                Ok(Some(completed_outcome(state)))
-            }
+            Ok(ExecutionOutcome::Finished { state, .. }) => Ok(Some(completed_outcome(state))),
             Ok(ExecutionOutcome::Interrupted { .. }) => Ok(Some(RunOutcome::Awaiting)),
             Err(error) => Ok(Some(RunOutcome::Failed(error.to_string()))),
         }
@@ -127,10 +134,21 @@ impl FleetRunExecutor {
 #[async_trait]
 impl RunExecutor for FleetRunExecutor {
     async fn execute(&self, run: &Run) -> ProtocolResult<RunOutcome> {
+        let raw = flatten_messages(&run.input);
+        let (agent_name, prompt) = if let Some(skill) = parse_slash_skill(&raw) {
+            let body = if skill.remainder.is_empty() {
+                raw
+            } else {
+                skill.remainder
+            };
+            (agent_name_for_route(skill.route).to_owned(), body)
+        } else {
+            (run.agent_name.clone(), raw)
+        };
         self.run_fleet(
             run.run_id,
-            flatten_messages(&run.input),
-            options_for_run(&self.options_template, &run.agent_name),
+            prompt,
+            options_for_run(&self.options_template, &agent_name),
         )
         .await
     }
@@ -302,10 +320,38 @@ fn browser_mcp_config(args: &FleetServeArgs) -> Result<Option<McpAttachConfig>, 
 
 async fn build_supervisor_options(
     args: &FleetServeArgs,
-) -> Result<(SupervisorOptions, bool), CliError> {
+) -> Result<(SupervisorOptions, bool, Option<String>), CliError> {
     let attachments = Arc::new(McpAttachments::new());
     let mut browser_tooling = None;
-    if let Some(config) = browser_mcp_config(args)? {
+    let mut plugin_name = None;
+
+    // Plugin pack can supply browser MCP (and advertise skills). CLI
+    // --browser-mcp-cmd still wins when both are set.
+    let mut plugin_browser: Option<McpAttachConfig> = None;
+    if let Some(path) = &args.plugin {
+        let pack = crate::plugin::PluginPack::load(path)?;
+        plugin_name = Some(pack.name.clone());
+        if !pack.skills.is_empty() {
+            eprintln!("altius: plugin skills: {}", pack.skills.join(", "));
+        }
+        for config in pack.mcp_configs() {
+            if config.name == "browser" {
+                plugin_browser = Some(config);
+            } else {
+                eprintln!(
+                    "altius: plugin MCP `{}` noted (attach reserved for named specialists)",
+                    config.name
+                );
+            }
+        }
+    }
+
+    let browser_config = match browser_mcp_config(args)? {
+        Some(config) => Some(config),
+        None => plugin_browser,
+    };
+
+    if let Some(config) = browser_config {
         match attachments.attach(config).await {
             Ok(attached) => {
                 let tools = McpTools::browser(Arc::clone(&attached));
@@ -332,6 +378,7 @@ async fn build_supervisor_options(
             hooks: Vec::new(),
         },
         browser_enabled,
+        plugin_name,
     ))
 }
 
@@ -370,10 +417,7 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
     let public_url = args.public_url.clone();
     let offline = args.offline;
     let local_did = format!("did:wba:{}%3A{}:agent:altius", bind.ip(), bind.port());
-    let auth_token = args
-        .token
-        .clone()
-        .filter(|token| !token.trim().is_empty());
+    let auth_token = args.token.clone().filter(|token| !token.trim().is_empty());
     let run_db_path = args.run_db.clone().unwrap_or_else(default_run_db_path);
     let serve_args = FleetServeArgs {
         bind: args.bind.clone(),
@@ -383,10 +427,15 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
         browser_mcp_args: args.browser_mcp_args.clone(),
         token: args.token.clone(),
         run_db: args.run_db.clone(),
+        plugin: args.plugin.clone(),
     };
 
     rt.block_on(async move {
-        let (options_template, browser_enabled) = build_supervisor_options(&serve_args).await?;
+        let (options_template, browser_enabled, plugin_name) =
+            build_supervisor_options(&serve_args).await?;
+        if let Some(name) = &plugin_name {
+            eprintln!("altius: plugin pack loaded: {name}");
+        }
         let card = agent_card(&public_url, browser_enabled)?;
         let a2a = altius_protocol::a2a::router(
             A2aState::new(card, Arc::new(EchoTaskHandler))
@@ -422,10 +471,7 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
 
         let app = if include_beeacp {
             let store = SqliteRunStore::open(&run_db_path).map_err(|error| {
-                CliError::message(format!(
-                    "open run db `{}`: {error}",
-                    run_db_path.display()
-                ))
+                CliError::message(format!("open run db `{}`: {error}", run_db_path.display()))
             })?;
             let bee = altius_protocol::beeacp::router(
                 BeeAcpState::new(
@@ -454,7 +500,9 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
             eprintln!("altius: BeeAI ACP runs at /runs (SSE at /runs/{{id}}/events)");
             eprintln!("altius: run db at {}", run_db_path.display());
             if auth_token.is_some() {
-                eprintln!("altius: bearer auth ENABLED (send Authorization: Bearer <token> or ?token=)");
+                eprintln!(
+                    "altius: bearer auth ENABLED (send Authorization: Bearer <token> or ?token=)"
+                );
             } else {
                 eprintln!("altius: bearer auth disabled (set --token or ALTIUS_FLEET_TOKEN)");
             }
