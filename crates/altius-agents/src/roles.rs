@@ -13,9 +13,10 @@ pub enum AgentRole {
     Security,
     /// Stub — must call TxGuard when implemented (Phase C adjacent).
     Deployer,
-    /// Stub — Phase C owns x402/MPP.
+    /// x402 settlement via `altius-payments` + TxGuard; graph node pending.
     Payment,
-    /// Stub — Phase D owns Neo4j/ontology.
+    /// Fleet knowledge graph (`altius-memory`) + ontology (`altius-ontology`);
+    /// graph node pending.
     Knowledge,
 }
 
@@ -78,11 +79,11 @@ pub fn stub_roles() -> Vec<StubRole> {
         },
         StubRole {
             role: AgentRole::Payment,
-            note: "Phase C: x402/MPP via altius-payments",
+            note: "altius-payments landed (x402 via TxGuard); graph node wiring pending",
         },
         StubRole {
             role: AgentRole::Knowledge,
-            note: "Phase D: Neo4j + ontology MCP",
+            note: "altius-memory + altius-ontology landed; graph node wiring pending",
         },
     ]
 }

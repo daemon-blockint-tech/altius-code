@@ -1,0 +1,26 @@
+[package]
+name = "altius-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Fleet knowledge and state layer: Neo4j schema, knowledge store, checkpoint persistence, and redacted trajectory logging (in-memory fallback for tests and offline CI)"
+
+[features]
+default = []
+neo4j = ["dep:neo4rs", "altius-graph/neo4j"]
+
+[dependencies]
+altius-core = { workspace = true }
+altius-graph = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+neo4rs = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

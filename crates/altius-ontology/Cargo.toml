@@ -1,0 +1,16 @@
+[package]
+name = "altius-ontology"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Domain ontology layer for the Altius fleet: built-in SVM/security schema plus a thin adapter trait for external OWL/RDF ontology MCP servers (open-ontologies style)"
+
+[dependencies]
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

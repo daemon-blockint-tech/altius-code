@@ -1,0 +1,12 @@
+[package]
+name = "altius-wasm-agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Capability-limited sandbox host for WASM specialist agents (stub: module validation and capability policy now, execution runtime later)"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
