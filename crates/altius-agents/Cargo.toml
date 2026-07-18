@@ -12,15 +12,18 @@ altius-detect = { workspace = true }
 altius-findings = { workspace = true }
 altius-graph = { workspace = true }
 altius-mcp = { workspace = true, features = ["mcp-client"] }
+altius-scanners = { workspace = true, features = ["all-chains"] }
 altius-svm-detect = { workspace = true }
 altius-svm-tools = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 reqwest = { workspace = true }
+regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+toml = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

@@ -14,12 +14,57 @@ pub enum Command {
     /// Detect the SVM framework (Anchor, Pinocchio, native) at a path and
     /// print what was found.
     Detect(DetectArgs),
+    /// Run Altius native security scanners (read-only).
+    Scan(ScanArgs),
+    /// Run the Altius evaluation harness against gold-label fixtures.
+    Eval(EvalArgs),
     /// Build the deployment plan for a program and run every transaction
     /// in it through the mandatory guardrail pipeline (policy, simulation,
     /// diff, approval, audit log) before broadcasting.
     Deploy(DeployArgs),
     /// Multi-agent fleet commands (supervisor + specialists).
     Fleet(FleetArgs),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ScanFormat {
+    Json,
+    Markdown,
+    Sarif,
+}
+
+#[derive(Debug, Parser)]
+pub struct ScanArgs {
+    /// Project / workspace path to scan.
+    #[arg(long, default_value = ".")]
+    pub path: PathBuf,
+
+    /// Chain family, or `auto` to detect.
+    #[arg(long, default_value = "auto")]
+    pub chain: String,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = ScanFormat::Json)]
+    pub format: ScanFormat,
+
+    /// Exit non-zero when High/Critical findings are present (CI gate).
+    #[arg(long)]
+    pub fail_on_findings: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct EvalArgs {
+    /// Optional JSON gold-suite path. Defaults to the built-in smoke suite.
+    #[arg(long)]
+    pub suite: Option<PathBuf>,
+
+    /// Root directory that contains fixture paths referenced by the suite.
+    #[arg(long)]
+    pub fixtures: Option<PathBuf>,
+
+    /// Emit Markdown instead of JSON.
+    #[arg(long)]
+    pub markdown: bool,
 }
 
 #[derive(Debug, Parser)]

@@ -30,6 +30,11 @@ impl DetectionRegistry {
         {
             registry.register(Arc::new(crate::svm::SvmDetectPlugin));
         }
+        registry.register(Arc::new(crate::chains::EvmDetectPlugin));
+        registry.register(Arc::new(crate::chains::AlgorandDetectPlugin));
+        registry.register(Arc::new(crate::chains::CairoDetectPlugin));
+        registry.register(Arc::new(crate::chains::CosmosDetectPlugin));
+        registry.register(Arc::new(crate::chains::TonDetectPlugin));
         registry
     }
 }

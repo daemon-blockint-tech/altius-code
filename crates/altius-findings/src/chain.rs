@@ -32,3 +32,20 @@ impl std::fmt::Display for ChainFamily {
         f.write_str(self.as_str())
     }
 }
+
+impl std::str::FromStr for ChainFamily {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "solana" | "svm" => Ok(Self::Solana),
+            "evm" | "solidity" => Ok(Self::Evm),
+            "algorand" => Ok(Self::Algorand),
+            "cairo" | "starknet" => Ok(Self::Cairo),
+            "cosmos" | "cosmwasm" => Ok(Self::Cosmos),
+            "ton" => Ok(Self::Ton),
+            "unknown" | "auto" => Ok(Self::Unknown),
+            _ => Err(()),
+        }
+    }
+}

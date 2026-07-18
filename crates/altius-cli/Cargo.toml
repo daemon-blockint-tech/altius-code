@@ -12,8 +12,12 @@ path = "src/main.rs"
 [dependencies]
 altius-core = { workspace = true }
 altius-agents = { workspace = true }
+altius-detect = { workspace = true }
+altius-eval = { workspace = true }
+altius-findings = { workspace = true }
 altius-mcp = { workspace = true, features = ["mcp-client"] }
 altius-protocol = { workspace = true }
+altius-scanners = { workspace = true, features = ["all-chains"] }
 tower-http = { workspace = true }
 altius-svm-detect = { workspace = true }
 altius-svm-tools = { workspace = true }

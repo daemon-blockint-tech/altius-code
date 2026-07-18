@@ -260,35 +260,67 @@ impl AltiusMcpServer {
                 .lint()
                 .map_err(|error| error.to_string())?;
             let scan = report.to_scan_report(display_path(&project, &root));
-            Ok(LintOutput {
-                has_errors: scan.has_errors(),
-                findings: scan
-                    .findings
-                    .into_iter()
-                    .map(|finding| {
-                        let legacy = match finding.severity {
-                            altius_findings::Severity::High
-                            | altius_findings::Severity::Critical => "error",
-                            _ => "warning",
-                        };
-                        LintFindingDto {
-                            rule_id: finding.pattern_id,
-                            severity: legacy.into(),
-                            message: bounded_redacted(&finding.description),
-                            file: finding.location.file,
-                            id: Some(finding.id),
-                            fingerprint: Some(finding.fingerprint),
-                            confidence: Some(finding.confidence.as_str().into()),
-                            chain: Some(finding.chain.as_str().into()),
-                        }
-                    })
-                    .collect(),
-            })
+            Ok(lint_output_from_scan(scan))
         })
         .await
         .map_err(|error| format!("lint worker failed: {error}"))
         .and_then(|result| result);
         tool_result(result)
+    }
+
+    #[tool(
+        description = "Run Altius native multi-chain security scanners (read-only; never deploys or signs)"
+    )]
+    async fn scan_project(
+        &self,
+        Parameters(request): Parameters<ProjectRequest>,
+    ) -> CallToolResult {
+        let root = self.workspace_root.clone();
+        let project = match self.resolve_project(&request.project) {
+            Ok(project) => project,
+            Err(error) => return tool_result::<LintOutput>(Err(error)),
+        };
+        let result = tokio::task::spawn_blocking(move || {
+            let registry = altius_scanners::default_registry();
+            let scan = registry
+                .scan_all(&project)
+                .map_err(|error| error.to_string())?;
+            let mut scan = scan;
+            scan.target = display_path(&project, &root);
+            Ok(lint_output_from_scan(scan))
+        })
+        .await
+        .map_err(|error| format!("scan worker failed: {error}"))
+        .and_then(|result| result);
+        tool_result(result)
+    }
+}
+
+fn lint_output_from_scan(scan: altius_findings::ScanReport) -> LintOutput {
+    LintOutput {
+        has_errors: scan.has_errors(),
+        findings: scan
+            .findings
+            .into_iter()
+            .map(|finding| {
+                let legacy = match finding.severity {
+                    altius_findings::Severity::High | altius_findings::Severity::Critical => {
+                        "error"
+                    }
+                    _ => "warning",
+                };
+                LintFindingDto {
+                    rule_id: finding.pattern_id,
+                    severity: legacy.into(),
+                    message: bounded_redacted(&finding.description),
+                    file: finding.location.file,
+                    id: Some(finding.id),
+                    fingerprint: Some(finding.fingerprint),
+                    confidence: Some(finding.confidence.as_str().into()),
+                    chain: Some(finding.chain.as_str().into()),
+                }
+            })
+            .collect(),
     }
 }
 

@@ -3,8 +3,10 @@ mod cli;
 mod deploy_command;
 mod detect_command;
 mod error;
+mod eval_command;
 mod fleet_command;
 mod rpc_endpoint;
+mod scan_command;
 mod serve_command;
 mod terminal_approval;
 mod toolchain_for;
@@ -26,6 +28,8 @@ fn main() {
 
     let result: Result<(), CliError> = match &cli.command {
         Command::Detect(args) => detect_command::run_detect(&args.project),
+        Command::Scan(args) => scan_command::run_scan(args),
+        Command::Eval(args) => eval_command::run_eval(args),
         Command::Deploy(args) => deploy_command::run_deploy(args),
         Command::Fleet(args) => match &args.command {
             FleetCommand::Run(run) => fleet_command::run_fleet_cmd(run),

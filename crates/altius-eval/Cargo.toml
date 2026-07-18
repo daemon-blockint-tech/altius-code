@@ -1,0 +1,18 @@
+[package]
+name = "altius-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Altius security evaluation harness (Arena-style recall/precision)"
+
+[dependencies]
+altius-findings = { workspace = true }
+altius-scanners = { workspace = true, features = ["all-chains"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

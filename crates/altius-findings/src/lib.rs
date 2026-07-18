@@ -7,6 +7,7 @@ mod chain;
 mod finding;
 mod fingerprint;
 mod report;
+mod sarif;
 mod severity;
 
 pub use chain::ChainFamily;
@@ -15,4 +16,5 @@ pub use finding::{
 };
 pub use fingerprint::{fingerprint_finding, normalize_path};
 pub use report::ScanReport;
+pub use sarif::to_sarif;
 pub use severity::{Confidence, Severity};

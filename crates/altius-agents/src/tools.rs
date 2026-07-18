@@ -1,7 +1,7 @@
 //! Tools exposed to fleet nodes.
 //!
-//! Local tools are detection and lints only: no tool may deploy, sign, or
-//! broadcast. External MCP tools (browser, …) are dispatched through
+//! Local tools include sandboxed filesystem / allowlisted commands plus SVM
+//! detect/lint. External MCP tools (browser, …) are dispatched through
 //! [`ToolDispatcher`] implementations that bound and redact results before
 //! they re-enter the conversation. Tool arguments come from LLM output and
 //! are treated as untrusted.
@@ -17,10 +17,12 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::error::AgentResult;
+use crate::fs_tools::{self, DEFAULT_BASH_ALLOWLIST};
 use crate::llm::{ChatMessage, LlmClient, ToolCall, ToolSpec};
+use crate::permissions::ToolPolicy;
 
 /// Maximum model↔tool round trips before we force a final answer.
-const MAX_TOOL_ROUNDS: usize = 4;
+const MAX_TOOL_ROUNDS: usize = 12;
 /// Upper bound on a single tool result fed back to the model.
 const MAX_TOOL_RESULT_BYTES: usize = 16 * 1024;
 
@@ -35,7 +37,7 @@ pub trait ToolDispatcher: Send + Sync {
 
 /// Extract the project root from a `[project_path=...]` marker in the user
 /// prompt, defaulting to the current directory.
-pub(crate) fn project_root_from_prompt(prompt: &str) -> PathBuf {
+pub fn project_root_from_prompt(prompt: &str) -> PathBuf {
     prompt
         .split("[project_path=")
         .nth(1)
@@ -59,8 +61,57 @@ fn path_tool_parameters() -> serde_json::Value {
     })
 }
 
-/// Tool specs available to the explorer node.
-pub(crate) fn explorer_tools() -> Vec<ToolSpec> {
+fn read_only_fs_tools() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: "read_file".into(),
+            description: "Read a UTF-8 text file under the project root. Read-only.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Relative file path." }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            name: "grep".into(),
+            description: "Search file contents under the project root with a regex. Read-only."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string" },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional subdirectory or file relative to the root."
+                    }
+                },
+                "required": ["pattern"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            name: "glob".into(),
+            description: "List files under the project root matching a glob pattern. Read-only."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob such as `src/**/*.rs`."
+                    }
+                },
+                "required": ["pattern"],
+                "additionalProperties": false
+            }),
+        },
+    ]
+}
+
+fn detect_lint_tools() -> Vec<ToolSpec> {
     let parameters = path_tool_parameters();
     vec![
         ToolSpec {
@@ -81,25 +132,71 @@ pub(crate) fn explorer_tools() -> Vec<ToolSpec> {
     ]
 }
 
-/// Tool specs available to the security node (detect + native SVM scan only).
+/// Tool specs available to the explorer node (read-only).
+pub(crate) fn explorer_tools() -> Vec<ToolSpec> {
+    let mut tools = detect_lint_tools();
+    tools.extend(read_only_fs_tools());
+    tools
+}
+
+/// Tool specs available to the security node (read-only).
 pub(crate) fn security_tools() -> Vec<ToolSpec> {
-    let parameters = path_tool_parameters();
-    vec![
-        ToolSpec {
-            name: "detect_project".into(),
-            description: "Detect which chain/framework a project uses before scanning. \
-                 Read-only; never deploys or signs."
-                .into(),
-            parameters: parameters.clone(),
-        },
-        ToolSpec {
-            name: "lint_project".into(),
-            description: "Run Altius native security scanners (SVM lints today) and return \
-                 canonical findings. Read-only; never deploys or signs."
-                .into(),
-            parameters,
-        },
-    ]
+    let mut tools = detect_lint_tools();
+    tools.extend(read_only_fs_tools());
+    tools
+}
+
+/// Tool specs for the coder node (read + write + allowlisted commands).
+pub(crate) fn coder_tools() -> Vec<ToolSpec> {
+    let mut tools = explorer_tools();
+    tools.push(ToolSpec {
+        name: "write_file".into(),
+        description: "Create or overwrite a UTF-8 file under the project root. Never signs."
+            .into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string" },
+                "content": { "type": "string" }
+            },
+            "required": ["path", "content"],
+            "additionalProperties": false
+        }),
+    });
+    tools.push(ToolSpec {
+        name: "edit_file".into(),
+        description: "Replace one unique occurrence of old_string with new_string in a file."
+            .into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string" },
+                "old_string": { "type": "string" },
+                "new_string": { "type": "string" }
+            },
+            "required": ["path", "old_string", "new_string"],
+            "additionalProperties": false
+        }),
+    });
+    tools.push(ToolSpec {
+        name: "run_command".into(),
+        description: "Run an allowlisted build/test command (cargo, anchor, forge, …). \
+             FailClosed argv; never signs or deploys via this tool."
+            .into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "argv": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Argument vector, e.g. [\"cargo\", \"test\"]."
+                }
+            },
+            "required": ["argv"],
+            "additionalProperties": false
+        }),
+    });
+    tools
 }
 
 /// Convert discovered MCP tools into [`ToolSpec`]s, keeping only names that
@@ -144,15 +241,27 @@ pub(crate) async fn tool_loop(
     llm.complete(&messages).await
 }
 
-/// Local read-only SVM tools (detect / lint), path-confined to a project root.
+/// Local tools (detect / lint / FS / allowlisted commands), path-confined.
 pub struct LocalTools {
     project_root: PathBuf,
+    bash_allowlist: Vec<String>,
 }
 
 impl LocalTools {
     pub fn new(project_root: impl Into<PathBuf>) -> Self {
         Self {
             project_root: project_root.into(),
+            bash_allowlist: DEFAULT_BASH_ALLOWLIST
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect(),
+        }
+    }
+
+    pub fn with_policy(project_root: impl Into<PathBuf>, policy: &ToolPolicy) -> Self {
+        Self {
+            project_root: project_root.into(),
+            bash_allowlist: policy.bash_allowlist.clone(),
         }
     }
 }
@@ -160,7 +269,7 @@ impl LocalTools {
 #[async_trait]
 impl ToolDispatcher for LocalTools {
     async fn call(&self, call: &ToolCall) -> String {
-        execute_local_tool(&self.project_root, call).await
+        execute_local_tool(&self.project_root, &self.bash_allowlist, call).await
     }
 }
 
@@ -217,56 +326,111 @@ impl ToolDispatcher for McpTools {
 
 /// Execute one local tool call. Failures are reported inside the result
 /// envelope (never as an `Err`) so the model can react to them.
-pub(crate) async fn execute_local_tool(project_root: &Path, call: &ToolCall) -> String {
-    let outcome = match resolve_path(project_root, &call.arguments) {
-        Ok(target) => {
-            let name = call.name.clone();
-            tokio::task::spawn_blocking(move || match name.as_str() {
-                "detect_project" => detect_output(&target),
-                "lint_project" => lint_output(&target),
-                other => Err(format!("unknown tool `{other}`")),
-            })
-            .await
-            .unwrap_or_else(|error| Err(format!("tool worker failed: {error}")))
-        }
-        Err(error) => Err(error),
-    };
+pub(crate) async fn execute_local_tool(
+    project_root: &Path,
+    bash_allowlist: &[String],
+    call: &ToolCall,
+) -> String {
+    let name = call.name.clone();
+    let args = call.arguments.clone();
+    let root = project_root.to_path_buf();
+    let allowlist = bash_allowlist.to_vec();
+    let outcome = tokio::task::spawn_blocking(move || execute_local_tool_sync(&root, &allowlist, &name, &args))
+        .await
+        .unwrap_or_else(|error| Err(format!("tool worker failed: {error}")));
     match outcome {
         Ok(data) => envelope_ok(data),
         Err(error) => envelope_err(error),
     }
 }
 
-fn envelope_ok(data: serde_json::Value) -> String {
-    bounded_redacted(&json!({ "ok": true, "data": data }).to_string())
+fn execute_local_tool_sync(
+    project_root: &Path,
+    bash_allowlist: &[String],
+    name: &str,
+    arguments: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match name {
+        "detect_project" => {
+            let target = resolve_detect_path(project_root, arguments)?;
+            detect_output(&target)
+        }
+        "lint_project" => {
+            let target = resolve_detect_path(project_root, arguments)?;
+            lint_output(&target)
+        }
+        "read_file" => {
+            let path = require_str(arguments, "path")?;
+            fs_tools::read_file(project_root, path)
+        }
+        "write_file" => {
+            let path = require_str(arguments, "path")?;
+            let content = require_str(arguments, "content")?;
+            fs_tools::write_file(project_root, path, content)
+        }
+        "edit_file" => {
+            let path = require_str(arguments, "path")?;
+            let old_string = require_str(arguments, "old_string")?;
+            let new_string = require_str(arguments, "new_string")?;
+            fs_tools::edit_file(project_root, path, old_string, new_string)
+        }
+        "grep" => {
+            let pattern = require_str(arguments, "pattern")?;
+            let path = arguments.get("path").and_then(|v| v.as_str());
+            fs_tools::grep(project_root, pattern, path)
+        }
+        "glob" => {
+            let pattern = require_str(arguments, "pattern")?;
+            fs_tools::glob_files(project_root, pattern)
+        }
+        "run_command" => {
+            let argv = arguments
+                .get("argv")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| "`argv` must be an array of strings".to_owned())?
+                .iter()
+                .map(|v| {
+                    v.as_str()
+                        .map(|s| s.to_owned())
+                        .ok_or_else(|| "`argv` entries must be strings".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            fs_tools::run_command(project_root, &argv, bash_allowlist)
+        }
+        other => Err(format!("unknown tool `{other}`")),
+    }
 }
 
-fn envelope_err(error: impl Into<String>) -> String {
-    bounded_redacted(&json!({ "ok": false, "error": error.into() }).to_string())
+fn require_str<'a>(arguments: &'a serde_json::Value, key: &str) -> Result<&'a str, String> {
+    arguments
+        .get(key)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("`{key}` is required"))
 }
 
-/// Resolve the optional `path` argument against the project root, refusing
-/// absolute paths and anything that escapes the root.
-fn resolve_path(project_root: &Path, arguments: &serde_json::Value) -> Result<PathBuf, String> {
+/// Resolve optional `path` for detect/lint (default `.`); must exist.
+fn resolve_detect_path(
+    project_root: &Path,
+    arguments: &serde_json::Value,
+) -> Result<PathBuf, String> {
     let requested = arguments
         .get("path")
         .and_then(|value| value.as_str())
         .unwrap_or(".");
-    let requested = Path::new(requested);
-    if requested.is_absolute() {
-        return Err("`path` must be relative to the project root".into());
+    if requested == "." {
+        return project_root
+            .canonicalize()
+            .map_err(|error| format!("cannot resolve project root: {error}"));
     }
-    let root = project_root
-        .canonicalize()
-        .map_err(|error| format!("cannot resolve project root: {error}"))?;
-    let resolved = root
-        .join(requested)
-        .canonicalize()
-        .map_err(|error| format!("cannot resolve `path`: {error}"))?;
-    if !resolved.starts_with(&root) {
-        return Err("`path` escapes the project root".into());
-    }
-    Ok(resolved)
+    fs_tools::resolve_existing_path(project_root, requested)
+}
+
+pub fn envelope_ok(data: serde_json::Value) -> String {
+    bounded_redacted(&json!({ "ok": true, "data": data }).to_string())
+}
+
+pub fn envelope_err(error: impl Into<String>) -> String {
+    bounded_redacted(&json!({ "ok": false, "error": error.into() }).to_string())
 }
 
 fn detect_output(project: &Path) -> Result<serde_json::Value, String> {
@@ -416,6 +580,26 @@ solana-program = "2"
     }
 
     #[tokio::test]
+    async fn write_and_read_file_tools() {
+        let project = native_project();
+        let dispatcher = LocalTools::new(project.path());
+        let written = dispatcher
+            .call(&call(
+                "write_file",
+                json!({"path": "notes.txt", "content": "hello fleet"}),
+            ))
+            .await;
+        let parsed: serde_json::Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(parsed["ok"], true);
+        let read = dispatcher
+            .call(&call("read_file", json!({"path": "notes.txt"})))
+            .await;
+        let parsed: serde_json::Value = serde_json::from_str(&read).unwrap();
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["data"]["content"], "hello fleet");
+    }
+
+    #[tokio::test]
     async fn unknown_tool_is_reported_in_envelope() {
         let project = native_project();
         let dispatcher = LocalTools::new(project.path());
@@ -441,6 +625,14 @@ solana-program = "2"
         let specs = tool_specs_from_discovered(&tools, BROWSER_TOOL_PREFIX);
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].name, "browser_navigate");
+    }
+
+    #[test]
+    fn coder_tools_include_write_and_bash() {
+        let names: Vec<_> = coder_tools().into_iter().map(|t| t.name).collect();
+        assert!(names.contains(&"write_file".into()));
+        assert!(names.contains(&"run_command".into()));
+        assert!(names.contains(&"read_file".into()));
     }
 
     /// Client that requests one `detect_project` call, then answers with text.

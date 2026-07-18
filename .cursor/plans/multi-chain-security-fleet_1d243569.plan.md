@@ -13,16 +13,16 @@ todos:
     status: completed
   - id: persist-security-knowledge
     content: Expand ontology and Neo4j APIs for findings, evidence, scanners, mitigations, and redacted trajectories
-    status: in_progress
+    status: completed
   - id: add-multichain-plugins
     content: Implement feature-gated native EVM, Algorand, Cairo, Cosmos/CosmWasm, and TON scanners with fixtures
-    status: pending
+    status: completed
   - id: build-eval-harness
     content: Create altius-eval with provenance-controlled gold labels and Arena-style recall/precision scoring
-    status: pending
+    status: completed
   - id: ship-product-surfaces
     content: Add scan/eval CLI, MCP/A2A/ACP integration, SARIF CI output, and later PWA report review
-    status: pending
+    status: in_progress
   - id: todo-1784398597272-0jnebfn6f
     content: implement knowledge from https://workshop.neodyme.io/index.html to codebase system
     status: completed

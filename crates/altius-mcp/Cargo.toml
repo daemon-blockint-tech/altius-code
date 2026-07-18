@@ -17,6 +17,7 @@ agent-lsp = ["mcp-client"]
 altius-core = { workspace = true }
 altius-detect = { workspace = true }
 altius-findings = { workspace = true }
+altius-scanners = { workspace = true, features = ["all-chains"] }
 altius-svm-detect = { workspace = true }
 altius-svm-tools = { workspace = true }
 axum = { workspace = true }

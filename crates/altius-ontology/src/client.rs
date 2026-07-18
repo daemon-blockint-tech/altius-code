@@ -118,7 +118,7 @@ mod tests {
         assert!(classes.iter().any(|c| c.name == "Contract"));
 
         let contract = client.describe_class("Contract").await.unwrap();
-        assert_eq!(contract.subclass_of.as_deref(), Some("Artifact"));
+        assert_eq!(contract.subclass_of.as_deref(), Some("Target"));
 
         let props = client.properties_of("Vulnerability").await.unwrap();
         assert!(props.iter().any(|p| p.name == "hasVulnerability"));

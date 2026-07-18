@@ -20,8 +20,10 @@ altius-ontology = { path = "crates/altius-ontology" }
 altius-wasm-agents = { path = "crates/altius-wasm-agents" }
 altius-findings = { path = "crates/altius-findings" }
 altius-detect = { path = "crates/altius-detect" }
+altius-scanners = { path = "crates/altius-scanners" }
 altius-svm-detect = { path = "crates/altius-svm-detect" }
 altius-svm-tools = { path = "crates/altius-svm-tools" }
+altius-eval = { path = "crates/altius-eval" }
 altius-txguard = { path = "crates/altius-txguard" }
 altius-signer = { path = "crates/altius-signer" }
 

@@ -9,10 +9,13 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AgentError, AgentResult};
+use crate::hooks::{HookedDispatcher, ToolHook};
 use crate::llm::{ChatMessage, LlmClient, OfflineLlmClient, ToolSpec};
+use crate::permissions::{PermissionedDispatcher, ToolPolicy};
+use crate::project_memory;
 use crate::prompts;
 use crate::roles::AgentRole;
-use crate::tools::{self, ToolDispatcher};
+use crate::tools::{self, LocalTools, ToolDispatcher};
 
 /// Which specialist path the router selected.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +62,27 @@ pub struct SupervisorOptions {
     pub agent_name: Option<String>,
     /// Live browser MCP tools. When `None`, the browser node runs as plain LLM.
     pub browser: Option<BrowserTooling>,
+    /// Deterministic Pre/Post tool hooks applied to every tool dispatcher.
+    pub hooks: Vec<Arc<dyn ToolHook>>,
+}
+
+/// Build Hooked → Permissioned → LocalTools for a role policy.
+fn harness_dispatcher(
+    project_root: &std::path::Path,
+    base_policy: ToolPolicy,
+    hooks: &[Arc<dyn ToolHook>],
+) -> Arc<dyn ToolDispatcher> {
+    let policy = ToolPolicy::load_from_project(project_root, base_policy);
+    let local = Arc::new(LocalTools::with_policy(project_root, &policy));
+    let permissioned = Arc::new(PermissionedDispatcher::new(policy, local));
+    Arc::new(HookedDispatcher::new(hooks.to_vec(), permissioned))
+}
+
+fn wrap_with_hooks(
+    inner: Arc<dyn ToolDispatcher>,
+    hooks: &[Arc<dyn ToolHook>],
+) -> Arc<dyn ToolDispatcher> {
+    Arc::new(HookedDispatcher::new(hooks.to_vec(), inner))
 }
 
 /// Shared supervisor graph state.
@@ -176,6 +200,15 @@ impl Node<FleetState> for LlmNode {
         mut state: FleetState,
     ) -> altius_graph::GraphResult<NodeResult<FleetState>> {
         state.trace.push(self.name.to_owned());
+        let project_root = tools::project_root_from_prompt(&state.prompt);
+        let system = match project_memory::load(&project_root) {
+            Some(memory) => format!(
+                "{}\n\n{}",
+                self.system,
+                project_memory::format_for_system(&memory)
+            ),
+            None => self.system.to_owned(),
+        };
         let user_blob = format!(
             "User prompt:\n{}\n\nPlan:\n{}\n\nExploration:\n{}\n\nCode notes:\n{}\n\nBrowser notes:\n{}\n\nSecurity notes:\n{}\n\nCritique:\n{}",
             state.prompt,
@@ -187,7 +220,7 @@ impl Node<FleetState> for LlmNode {
             state.critique.as_deref().unwrap_or("(none)"),
         );
         let messages = vec![
-            ChatMessage::system(self.system),
+            ChatMessage::system(system),
             ChatMessage::user(user_blob),
         ];
         let text = if self.tools.is_empty() {
@@ -201,7 +234,7 @@ impl Node<FleetState> for LlmNode {
             )
             .await
         } else {
-            let local = tools::LocalTools::new(tools::project_root_from_prompt(&state.prompt));
+            let local = LocalTools::new(&project_root);
             tools::tool_loop(self.llm.as_ref(), &self.tools, &local, messages).await
         }
         .map_err(|e| altius_graph::GraphError::node_failed(self.name, e.to_string()))?;
@@ -227,6 +260,16 @@ pub fn build_supervisor_graph_with(
     let critic_llm = Arc::clone(&llm);
     let finalize_llm = Arc::clone(&llm);
 
+    // Project root for dispatcher policy is resolved per-prompt at run time;
+    // graph build uses cwd so tools are wired; LocalTools re-resolves paths
+    // from each call. Use "." as the build-time root for shared dispatchers.
+    let build_root = std::path::Path::new(".");
+    let explorer_dispatcher =
+        harness_dispatcher(build_root, ToolPolicy::read_only(), &options.hooks);
+    let coder_dispatcher = harness_dispatcher(build_root, ToolPolicy::coder(), &options.hooks);
+    let security_dispatcher =
+        harness_dispatcher(build_root, ToolPolicy::read_only(), &options.hooks);
+
     let mut browser_node = LlmNode::new(
         AgentRole::Browser.as_str(),
         prompts::BROWSER_SYSTEM,
@@ -237,8 +280,8 @@ pub fn build_supervisor_graph_with(
         },
     );
     if let Some(browser) = &options.browser {
-        browser_node =
-            browser_node.with_dispatcher(browser.tools.clone(), Arc::clone(&browser.dispatcher));
+        let browser_disp = wrap_with_hooks(Arc::clone(&browser.dispatcher), &options.hooks);
+        browser_node = browser_node.with_dispatcher(browser.tools.clone(), browser_disp);
     }
 
     let security_node = LlmNode::new(
@@ -250,7 +293,7 @@ pub fn build_supervisor_graph_with(
             NodeResult::Continue(state)
         },
     )
-    .with_tools(tools::security_tools());
+    .with_dispatcher(tools::security_tools(), security_dispatcher);
 
     let graph = GraphBuilder::new()
         .add_node(LlmNode::new(
@@ -277,19 +320,22 @@ pub fn build_supervisor_graph_with(
                     NodeResult::Continue(state)
                 },
             )
-            // Read-only detection and lint tools; deterministic clients that
-            // never emit tool calls (e.g. offline) are unaffected.
-            .with_tools(tools::explorer_tools()),
+            // Read-only FS + detect/lint; offline clients that never emit tool
+            // calls are unaffected.
+            .with_dispatcher(tools::explorer_tools(), explorer_dispatcher),
         )
-        .add_node(LlmNode::new(
-            AgentRole::Coder.as_str(),
-            prompts::CODER_SYSTEM,
-            coder_llm,
-            |text, mut state| {
-                state.code_notes = Some(text.to_owned());
-                NodeResult::Continue(state)
-            },
-        ))
+        .add_node(
+            LlmNode::new(
+                AgentRole::Coder.as_str(),
+                prompts::CODER_SYSTEM,
+                coder_llm,
+                |text, mut state| {
+                    state.code_notes = Some(text.to_owned());
+                    NodeResult::Continue(state)
+                },
+            )
+            .with_dispatcher(tools::coder_tools(), coder_dispatcher),
+        )
         .add_node(browser_node)
         .add_node(security_node)
         .add_node(LlmNode::new(

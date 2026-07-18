@@ -3,6 +3,7 @@
 //! Plugins return ranked [`DetectedProject`] values. The default registry
 //! includes the SVM adapter (`altius-svm-detect`) when the `svm` feature is on.
 
+mod chains;
 mod error;
 mod plugin;
 mod registry;
