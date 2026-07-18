@@ -21,6 +21,7 @@ pub enum FleetRoute {
     Explorer,
     Coder,
     Browser,
+    Security,
     #[default]
     Both,
 }
@@ -28,7 +29,9 @@ pub enum FleetRoute {
 impl FleetRoute {
     pub fn parse(raw: &str) -> Self {
         let lower = raw.to_ascii_lowercase();
-        if lower.contains("browser") {
+        if lower.contains("security") {
+            Self::Security
+        } else if lower.contains("browser") {
             Self::Browser
         } else if lower.contains("explorer") && !lower.contains("coder") && !lower.contains("both")
         {
@@ -70,6 +73,7 @@ pub struct FleetState {
     pub exploration: Option<String>,
     pub code_notes: Option<String>,
     pub browser_notes: Option<String>,
+    pub security_notes: Option<String>,
     pub critique: Option<String>,
     pub final_answer: Option<String>,
     pub trace: Vec<String>,
@@ -94,15 +98,22 @@ impl FleetState {
     }
 }
 
-/// Map an agent name / `@Browser` mention onto a forced route.
+/// Map an agent name / `@Browser` / `@Security` mention onto a forced route.
 pub fn resolve_forced_route(agent_name: Option<&str>, prompt: &str) -> Option<FleetRoute> {
     if let Some(name) = agent_name {
         let lower = name.trim().trim_start_matches('@').to_ascii_lowercase();
+        if lower == "security" {
+            return Some(FleetRoute::Security);
+        }
         if lower == "browser" {
             return Some(FleetRoute::Browser);
         }
     }
-    if prompt.to_ascii_lowercase().contains("@browser") {
+    let prompt_lower = prompt.to_ascii_lowercase();
+    if prompt_lower.contains("@security") {
+        return Some(FleetRoute::Security);
+    }
+    if prompt_lower.contains("@browser") {
         return Some(FleetRoute::Browser);
     }
     None
@@ -166,12 +177,13 @@ impl Node<FleetState> for LlmNode {
     ) -> altius_graph::GraphResult<NodeResult<FleetState>> {
         state.trace.push(self.name.to_owned());
         let user_blob = format!(
-            "User prompt:\n{}\n\nPlan:\n{}\n\nExploration:\n{}\n\nCode notes:\n{}\n\nBrowser notes:\n{}\n\nCritique:\n{}",
+            "User prompt:\n{}\n\nPlan:\n{}\n\nExploration:\n{}\n\nCode notes:\n{}\n\nBrowser notes:\n{}\n\nSecurity notes:\n{}\n\nCritique:\n{}",
             state.prompt,
             state.plan.as_deref().unwrap_or("(none)"),
             state.exploration.as_deref().unwrap_or("(none)"),
             state.code_notes.as_deref().unwrap_or("(none)"),
             state.browser_notes.as_deref().unwrap_or("(none)"),
+            state.security_notes.as_deref().unwrap_or("(none)"),
             state.critique.as_deref().unwrap_or("(none)"),
         );
         let messages = vec![
@@ -197,7 +209,7 @@ impl Node<FleetState> for LlmNode {
     }
 }
 
-/// Build the supervisor graph: router → explorer/coder/browser → critic → finalize.
+/// Build the supervisor graph: router → explorer/coder/browser/security → critic → finalize.
 pub fn build_supervisor_graph(llm: Arc<dyn LlmClient>) -> AgentResult<Graph<FleetState>> {
     build_supervisor_graph_with(llm, &SupervisorOptions::default())
 }
@@ -211,6 +223,7 @@ pub fn build_supervisor_graph_with(
     let explorer_llm = Arc::clone(&llm);
     let coder_llm = Arc::clone(&llm);
     let browser_llm = Arc::clone(&llm);
+    let security_llm = Arc::clone(&llm);
     let critic_llm = Arc::clone(&llm);
     let finalize_llm = Arc::clone(&llm);
 
@@ -227,6 +240,17 @@ pub fn build_supervisor_graph_with(
         browser_node =
             browser_node.with_dispatcher(browser.tools.clone(), Arc::clone(&browser.dispatcher));
     }
+
+    let security_node = LlmNode::new(
+        AgentRole::Security.as_str(),
+        prompts::SECURITY_SYSTEM,
+        security_llm,
+        |text, mut state| {
+            state.security_notes = Some(text.to_owned());
+            NodeResult::Continue(state)
+        },
+    )
+    .with_tools(tools::security_tools());
 
     let graph = GraphBuilder::new()
         .add_node(LlmNode::new(
@@ -267,6 +291,7 @@ pub fn build_supervisor_graph_with(
             },
         ))
         .add_node(browser_node)
+        .add_node(security_node)
         .add_node(LlmNode::new(
             AgentRole::Critic.as_str(),
             prompts::CRITIC_SYSTEM,
@@ -291,14 +316,17 @@ pub fn build_supervisor_graph_with(
             FleetRoute::Coder => Some("workers_coder".into()),
             FleetRoute::Both => Some("workers_both".into()),
             FleetRoute::Browser => Some("workers_browser".into()),
+            FleetRoute::Security => Some("workers_security".into()),
         })
         .add_node(DispatchNode::explorer_only())
         .add_node(DispatchNode::coder_only())
         .add_node(DispatchNode::both())
         .add_node(DispatchNode::browser_only())
+        .add_node(DispatchNode::security_only())
         .add_edge("workers_explorer", AgentRole::Explorer.as_str())
         .add_edge("workers_coder", AgentRole::Coder.as_str())
         .add_edge("workers_browser", AgentRole::Browser.as_str())
+        .add_edge("workers_security", AgentRole::Security.as_str())
         .add_fanout_join(
             "workers_both",
             [AgentRole::Explorer.as_str(), AgentRole::Coder.as_str()],
@@ -308,6 +336,7 @@ pub fn build_supervisor_graph_with(
         .add_edge(AgentRole::Explorer.as_str(), AgentRole::Critic.as_str())
         .add_edge(AgentRole::Coder.as_str(), AgentRole::Critic.as_str())
         .add_edge(AgentRole::Browser.as_str(), AgentRole::Critic.as_str())
+        .add_edge(AgentRole::Security.as_str(), AgentRole::Critic.as_str())
         .add_edge(AgentRole::Critic.as_str(), "finalize")
         .build()
         .map_err(AgentError::from)?;
@@ -339,6 +368,9 @@ fn merge_worker_states(branches: Vec<FleetState>) -> FleetState {
         }
         if b.browser_notes.is_some() {
             out.browser_notes = b.browser_notes;
+        }
+        if b.security_notes.is_some() {
+            out.security_notes = b.security_notes;
         }
         for t in b.trace {
             if !out.trace.contains(&t) {
@@ -373,6 +405,11 @@ impl DispatchNode {
     fn browser_only() -> Self {
         Self {
             name: "workers_browser",
+        }
+    }
+    fn security_only() -> Self {
+        Self {
+            name: "workers_security",
         }
     }
 }
@@ -624,6 +661,7 @@ mod tests {
         assert_eq!(FleetRoute::parse("coder"), FleetRoute::Coder);
         assert_eq!(FleetRoute::parse("both"), FleetRoute::Both);
         assert_eq!(FleetRoute::parse("browser"), FleetRoute::Browser);
+        assert_eq!(FleetRoute::parse("security"), FleetRoute::Security);
     }
 
     #[test]
@@ -640,6 +678,60 @@ mod tests {
             resolve_forced_route(None, "please @Browser this"),
             Some(FleetRoute::Browser)
         );
+        assert_eq!(
+            resolve_forced_route(Some("security"), "anything"),
+            Some(FleetRoute::Security)
+        );
+        assert_eq!(
+            resolve_forced_route(None, "@Security audit this program"),
+            Some(FleetRoute::Security)
+        );
         assert_eq!(resolve_forced_route(Some("altius"), "find module"), None);
+    }
+
+    #[tokio::test]
+    async fn agent_name_security_forces_security_route_offline() {
+        let (_run_id, outcome) = run_supervisor_outcome_for(
+            Arc::new(OfflineLlmClient),
+            "audit this Anchor project for missing signer checks",
+            SupervisorOptions {
+                agent_name: Some("security".into()),
+                browser: None,
+            },
+        )
+        .await
+        .unwrap();
+        match outcome {
+            SupervisorOutcome::Finished(state) => {
+                assert_eq!(state.route, FleetRoute::Security);
+                assert_eq!(state.forced_route, Some(FleetRoute::Security));
+                assert!(state.security_notes.is_some());
+                assert!(state.trace.iter().any(|t| t == "security"));
+                assert!(state.exploration.is_none());
+            }
+            SupervisorOutcome::Awaiting { reason, .. } => {
+                panic!("offline security run should not await: {reason}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn at_security_mention_forces_security_route_offline() {
+        let (_run_id, outcome) = run_supervisor_outcome_for(
+            Arc::new(OfflineLlmClient),
+            "@Security scan for arbitrary CPI",
+            SupervisorOptions::default(),
+        )
+        .await
+        .unwrap();
+        match outcome {
+            SupervisorOutcome::Finished(state) => {
+                assert_eq!(state.route, FleetRoute::Security);
+                assert!(state.security_notes.is_some());
+            }
+            SupervisorOutcome::Awaiting { reason, .. } => {
+                panic!("offline @Security run should not await: {reason}")
+            }
+        }
     }
 }

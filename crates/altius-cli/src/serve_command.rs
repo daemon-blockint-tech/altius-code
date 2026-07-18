@@ -111,13 +111,27 @@ fn llm_client(offline: bool) -> ProtocolResult<Arc<dyn LlmClient>> {
 }
 
 fn agent_card(public_url: &str, browser_enabled: bool) -> Result<AgentCard, CliError> {
-    let mut skills = vec![AgentSkill {
-        id: "fleet-supervisor".into(),
-        name: "Fleet supervisor".into(),
-        description: "Route, explore, code-review, and finalize SVM engineering tasks".into(),
-        tags: vec!["solana".into(), "svm".into()],
-        examples: vec!["detect and lint this Anchor project".into()],
-    }];
+    let mut skills = vec![
+        AgentSkill {
+            id: "fleet-supervisor".into(),
+            name: "Fleet supervisor".into(),
+            description: "Route, explore, code-review, and finalize SVM engineering tasks".into(),
+            tags: vec!["solana".into(), "svm".into()],
+            examples: vec!["detect and lint this Anchor project".into()],
+        },
+        AgentSkill {
+            id: "security".into(),
+            name: "Security".into(),
+            description:
+                "Read-only vulnerability scanning via native Altius scanners (agent_name=security / @Security)"
+                    .into(),
+            tags: vec!["security".into(), "audit".into(), "svm".into()],
+            examples: vec![
+                "@Security audit this program for missing signer checks".into(),
+                "agent_name=security lint the workspace".into(),
+            ],
+        },
+    ];
     if browser_enabled {
         skills.push(AgentSkill {
             id: "browser".into(),

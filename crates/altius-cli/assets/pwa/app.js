@@ -11,6 +11,7 @@
   const els = {
     prompt: document.getElementById("prompt"),
     send: document.getElementById("send"),
+    sendIcon: document.getElementById("send-icon"),
     refresh: document.getElementById("refresh"),
     error: document.getElementById("error"),
     runs: document.getElementById("runs"),
@@ -23,10 +24,15 @@
     approve: document.getElementById("approve"),
     cancel: document.getElementById("cancel"),
     agentPills: document.getElementById("agent-pills"),
+    agentEyebrow: document.getElementById("agent-eyebrow"),
     themeToggle: document.getElementById("theme-toggle"),
     themeIcon: document.getElementById("theme-icon"),
+    navNew: document.getElementById("nav-new"),
     navDispatch: document.getElementById("nav-dispatch"),
     navRuns: document.getElementById("nav-runs"),
+    mainInner: document.getElementById("main-inner"),
+    sidebarHistory: document.getElementById("sidebar-history"),
+    historyList: document.getElementById("history-list"),
   };
 
   let selectedId = null;
@@ -113,10 +119,16 @@
 
   function setAgent(agent) {
     selectedAgent = agent;
+    els.agentEyebrow.textContent = agent;
     for (const btn of els.agentPills.querySelectorAll("[data-agent]")) {
       const pressed = btn.dataset.agent === agent;
       btn.setAttribute("aria-pressed", pressed ? "true" : "false");
     }
+  }
+
+  /* Home state: center the composer (Perplexity-style) until a run is open. */
+  function updateHome() {
+    els.mainInner.classList.toggle("home", !selectedId);
   }
 
   function setView(view) {

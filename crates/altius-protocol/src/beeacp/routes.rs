@@ -322,11 +322,7 @@ mod tests {
         let id = created["run_id"].as_str().unwrap().to_owned();
         wait_for_status(&app, &id, "completed").await;
 
-        let (status, body) = send(
-            &app,
-            Request::get("/runs").body(Body::empty()).unwrap(),
-        )
-        .await;
+        let (status, body) = send(&app, Request::get("/runs").body(Body::empty()).unwrap()).await;
         assert_eq!(status, StatusCode::OK);
         let runs = body.as_array().expect("list should be an array");
         assert!(runs.iter().any(|run| run["run_id"] == id));

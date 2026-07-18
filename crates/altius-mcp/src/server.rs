@@ -104,15 +104,24 @@ struct TestCase {
 #[derive(Debug, Serialize)]
 struct LintOutput {
     has_errors: bool,
-    findings: Vec<LintFinding>,
+    findings: Vec<LintFindingDto>,
 }
 
+/// Wire DTO for lint/scan findings (compatible with prior MCP shape).
 #[derive(Debug, Serialize)]
-struct LintFinding {
+struct LintFindingDto {
     rule_id: String,
     severity: String,
     message: String,
     file: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confidence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chain: Option<String>,
 }
 
 impl AltiusMcpServer {
@@ -250,16 +259,28 @@ impl AltiusMcpServer {
             let report = toolchain_for(&detected, &project)
                 .lint()
                 .map_err(|error| error.to_string())?;
+            let scan = report.to_scan_report(display_path(&project, &root));
             Ok(LintOutput {
-                has_errors: report.has_errors(),
-                findings: report
+                has_errors: scan.has_errors(),
+                findings: scan
                     .findings
                     .into_iter()
-                    .map(|finding| LintFinding {
-                        rule_id: finding.rule_id,
-                        severity: format!("{:?}", finding.severity).to_ascii_lowercase(),
-                        message: bounded_redacted(&finding.message),
-                        file: display_path(&finding.file, &root),
+                    .map(|finding| {
+                        let legacy = match finding.severity {
+                            altius_findings::Severity::High
+                            | altius_findings::Severity::Critical => "error",
+                            _ => "warning",
+                        };
+                        LintFindingDto {
+                            rule_id: finding.pattern_id,
+                            severity: legacy.into(),
+                            message: bounded_redacted(&finding.description),
+                            file: finding.location.file,
+                            id: Some(finding.id),
+                            fingerprint: Some(finding.fingerprint),
+                            confidence: Some(finding.confidence.as_str().into()),
+                            chain: Some(finding.chain.as_str().into()),
+                        }
                     })
                     .collect(),
             })

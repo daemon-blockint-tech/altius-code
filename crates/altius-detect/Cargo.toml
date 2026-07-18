@@ -1,0 +1,21 @@
+[package]
+name = "altius-detect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Chain-agnostic project detection registry for Altius scanners"
+
+[features]
+default = ["svm"]
+svm = ["dep:altius-svm-detect"]
+
+[dependencies]
+altius-findings = { workspace = true }
+altius-svm-detect = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

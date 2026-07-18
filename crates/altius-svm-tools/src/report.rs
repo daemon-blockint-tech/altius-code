@@ -99,6 +99,18 @@ pub struct LintFinding {
     pub file: PathBuf,
 }
 
+impl LintFinding {
+    /// Convert into the canonical multi-chain [`altius_findings::Finding`].
+    pub fn to_finding(&self) -> altius_findings::Finding {
+        altius_findings::Finding::from_lint(
+            &self.rule_id,
+            self.severity == Severity::Error,
+            &self.message,
+            self.file.display().to_string(),
+        )
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LintReport {
     pub findings: Vec<LintFinding>,
@@ -107,5 +119,14 @@ pub struct LintReport {
 impl LintReport {
     pub fn has_errors(&self) -> bool {
         self.findings.iter().any(|f| f.severity == Severity::Error)
+    }
+
+    /// Convert into a canonical [`altius_findings::ScanReport`].
+    pub fn to_scan_report(&self, target: impl Into<String>) -> altius_findings::ScanReport {
+        let mut report = altius_findings::ScanReport::new(target)
+            .with_chain(altius_findings::ChainFamily::Solana);
+        report.scanners.push("altius-svm-tools".into());
+        report.extend(self.findings.iter().map(LintFinding::to_finding));
+        report
     }
 }

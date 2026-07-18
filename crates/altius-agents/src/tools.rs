@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use altius_detect::{detect_best, DetectionRegistry};
 use altius_mcp::{AttachedMcp, DiscoveredTool};
 use altius_svm_detect::{detect, Framework};
 use altius_svm_tools::{AnchorToolchain, CargoBuildSbfToolchain, SvmToolchain};
@@ -45,9 +46,8 @@ pub(crate) fn project_root_from_prompt(prompt: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Tool specs available to the explorer node.
-pub(crate) fn explorer_tools() -> Vec<ToolSpec> {
-    let parameters = json!({
+fn path_tool_parameters() -> serde_json::Value {
+    json!({
         "type": "object",
         "properties": {
             "path": {
@@ -56,7 +56,12 @@ pub(crate) fn explorer_tools() -> Vec<ToolSpec> {
             }
         },
         "additionalProperties": false
-    });
+    })
+}
+
+/// Tool specs available to the explorer node.
+pub(crate) fn explorer_tools() -> Vec<ToolSpec> {
+    let parameters = path_tool_parameters();
     vec![
         ToolSpec {
             name: "detect_project".into(),
@@ -70,6 +75,27 @@ pub(crate) fn explorer_tools() -> Vec<ToolSpec> {
             name: "lint_project".into(),
             description: "Run Altius heuristic security lints against an SVM project. \
                  Read-only; never deploys or signs."
+                .into(),
+            parameters,
+        },
+    ]
+}
+
+/// Tool specs available to the security node (detect + native SVM scan only).
+pub(crate) fn security_tools() -> Vec<ToolSpec> {
+    let parameters = path_tool_parameters();
+    vec![
+        ToolSpec {
+            name: "detect_project".into(),
+            description: "Detect which chain/framework a project uses before scanning. \
+                 Read-only; never deploys or signs."
+                .into(),
+            parameters: parameters.clone(),
+        },
+        ToolSpec {
+            name: "lint_project".into(),
+            description: "Run Altius native security scanners (SVM lints today) and return \
+                 canonical findings. Read-only; never deploys or signs."
                 .into(),
             parameters,
         },
@@ -244,22 +270,42 @@ fn resolve_path(project_root: &Path, arguments: &serde_json::Value) -> Result<Pa
 }
 
 fn detect_output(project: &Path) -> Result<serde_json::Value, String> {
-    match detect(project).map_err(|error| error.to_string())? {
-        None => Ok(json!({ "svm_project": false })),
-        Some(detected) => Ok(json!({
-            "svm_project": true,
-            "framework": detected.framework.to_string(),
-            "default_cluster": detected.default_cluster.to_string(),
-            "toolchain": format!("{:?}", detected.toolchain),
-            "programs": detected
-                .programs
-                .iter()
-                .map(|program| json!({
-                    "name": program.name,
-                    "program_id": program.program_id,
-                }))
-                .collect::<Vec<_>>(),
-        })),
+    let registry = DetectionRegistry::with_defaults();
+    match detect_best(&registry, project).map_err(|error| error.to_string())? {
+        None => Ok(json!({ "svm_project": false, "detected": false })),
+        Some(detected) => {
+            // Preserve the historical SVM-shaped payload when the winner is Solana.
+            if detected.chain == altius_findings::ChainFamily::Solana {
+                if let Ok(Some(svm)) = detect(project) {
+                    return Ok(json!({
+                        "svm_project": true,
+                        "detected": true,
+                        "chain": detected.chain.as_str(),
+                        "plugin": detected.plugin,
+                        "rank": detected.rank,
+                        "framework": svm.framework.to_string(),
+                        "default_cluster": svm.default_cluster.to_string(),
+                        "toolchain": format!("{:?}", svm.toolchain),
+                        "programs": svm
+                            .programs
+                            .iter()
+                            .map(|program| json!({
+                                "name": program.name,
+                                "program_id": program.program_id,
+                            }))
+                            .collect::<Vec<_>>(),
+                    }));
+                }
+            }
+            Ok(json!({
+                "svm_project": false,
+                "detected": true,
+                "chain": detected.chain.as_str(),
+                "plugin": detected.plugin,
+                "rank": detected.rank,
+                "hints": detected.hints,
+            }))
+        }
     }
 }
 
@@ -272,19 +318,9 @@ fn lint_output(project: &Path) -> Result<serde_json::Value, String> {
         Framework::Pinocchio | Framework::Native => Box::new(CargoBuildSbfToolchain::new(project)),
     };
     let report = toolchain.lint().map_err(|error| error.to_string())?;
-    Ok(json!({
-        "has_errors": report.has_errors(),
-        "findings": report
-            .findings
-            .iter()
-            .map(|finding| json!({
-                "rule_id": finding.rule_id,
-                "severity": format!("{:?}", finding.severity).to_ascii_lowercase(),
-                "message": finding.message,
-                "file": finding.file.display().to_string(),
-            }))
-            .collect::<Vec<_>>(),
-    }))
+    Ok(report
+        .to_scan_report(project.display().to_string())
+        .to_lint_compat_json())
 }
 
 fn bounded_redacted(value: &str) -> String {

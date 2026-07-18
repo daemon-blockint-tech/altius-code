@@ -369,7 +369,14 @@ impl LlmClient for OfflineLlmClient {
             .to_ascii_lowercase();
 
         let reply = if system.contains("ROUTER") {
-            let route = if prompt_section.contains("@browser") {
+            let route = if prompt_section.contains("@security")
+                || prompt_section.contains("audit")
+                || prompt_section.contains("vulnerab")
+                || prompt_section.contains("security scan")
+                || (prompt_section.contains("lint") && prompt_section.contains("secur"))
+            {
+                "security"
+            } else if prompt_section.contains("@browser") {
                 "browser"
             } else if prompt_section.contains("refactor")
                 || prompt_section.contains("implement")
@@ -400,6 +407,11 @@ impl LlmClient for OfflineLlmClient {
         } else if system.contains("BROWSER") {
             format!(
                 "BROWSER: Offline pass for «{}». No live browser MCP tools were invoked.",
+                prompt_section.trim()
+            )
+        } else if system.contains("SECURITY") {
+            format!(
+                "SECURITY: Offline audit pass for «{}». Detect/lint tools available; no signing.",
                 prompt_section.trim()
             )
         } else if system.contains("CRITIC") {

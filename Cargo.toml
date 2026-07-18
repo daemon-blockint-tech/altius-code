@@ -18,6 +18,8 @@ altius-payments = { path = "crates/altius-payments" }
 altius-memory = { path = "crates/altius-memory" }
 altius-ontology = { path = "crates/altius-ontology" }
 altius-wasm-agents = { path = "crates/altius-wasm-agents" }
+altius-findings = { path = "crates/altius-findings" }
+altius-detect = { path = "crates/altius-detect" }
 altius-svm-detect = { path = "crates/altius-svm-detect" }
 altius-svm-tools = { path = "crates/altius-svm-tools" }
 altius-txguard = { path = "crates/altius-txguard" }

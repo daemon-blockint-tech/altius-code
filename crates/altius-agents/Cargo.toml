@@ -8,6 +8,8 @@ description = "Altius fleet agent roles, LLM client trait, and supervisor graph"
 
 [dependencies]
 altius-core = { workspace = true }
+altius-detect = { workspace = true }
+altius-findings = { workspace = true }
 altius-graph = { workspace = true }
 altius-mcp = { workspace = true, features = ["mcp-client"] }
 altius-svm-detect = { workspace = true }

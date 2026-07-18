@@ -11,7 +11,7 @@ pub enum AgentRole {
     Critic,
     /// Web automation via an attached browser MCP server (`@Browser`).
     Browser,
-    /// Stub until Phase B tooling wiring.
+    /// Read-only vulnerability scanning (`@Security`).
     Security,
     /// Stub — must call TxGuard when implemented (Phase C adjacent).
     Deployer,
@@ -48,7 +48,7 @@ impl AgentRole {
             Self::Coder => prompts::CODER_SYSTEM,
             Self::Critic => prompts::CRITIC_SYSTEM,
             Self::Browser => prompts::BROWSER_SYSTEM,
-            Self::Security => prompts::SECURITY_STUB_SYSTEM,
+            Self::Security => prompts::SECURITY_SYSTEM,
             Self::Deployer => prompts::DEPLOYER_STUB_SYSTEM,
             Self::Payment => prompts::PAYMENT_STUB_SYSTEM,
             Self::Knowledge => prompts::KNOWLEDGE_STUB_SYSTEM,
@@ -59,7 +59,12 @@ impl AgentRole {
     pub fn phase_a_active(self) -> bool {
         matches!(
             self,
-            Self::Router | Self::Explorer | Self::Coder | Self::Critic | Self::Browser
+            Self::Router
+                | Self::Explorer
+                | Self::Coder
+                | Self::Critic
+                | Self::Browser
+                | Self::Security
         )
     }
 }
@@ -73,10 +78,6 @@ pub struct StubRole {
 
 pub fn stub_roles() -> Vec<StubRole> {
     vec![
-        StubRole {
-            role: AgentRole::Security,
-            note: "Phase B: lint/audit via MCP + SVM tools",
-        },
         StubRole {
             role: AgentRole::Deployer,
             note: "Phase C-adjacent: TxRequest only through TxGuard",
