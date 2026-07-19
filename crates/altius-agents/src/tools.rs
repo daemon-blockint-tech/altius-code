@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::error::AgentResult;
+use crate::evidence::EvidenceEntry;
 use crate::fs_tools::{self, DEFAULT_BASH_ALLOWLIST};
 use crate::llm::{ChatMessage, LlmClient, ToolCall, ToolSpec};
 use crate::permissions::ToolPolicy;
@@ -157,8 +158,16 @@ pub(crate) fn security_tools() -> Vec<ToolSpec> {
     let mut tools = detect_lint_tools();
     tools.push(ToolSpec {
         name: "scan_project".into(),
-        description: "Run Altius native multi-chain security scanners and return \
-             canonical findings. Read-only; never deploys or signs."
+        description: "Run Altius native security scanners and return canonical findings. \
+             Read-only; use triage_project for correlation context. Never deploys or signs."
+            .into(),
+        parameters: path_tool_parameters(),
+    });
+    tools.push(ToolSpec {
+        name: "triage_project".into(),
+        description: "Scan the complete project and return deduplicated canonical findings, \
+             deterministic triage hints, exploit-path hypotheses, cross-file correlations, and \
+             related files to inspect. Read-only; hints must be verified with read_file/grep."
             .into(),
         parameters: path_tool_parameters(),
     });
@@ -239,25 +248,40 @@ pub fn tool_specs_from_discovered(tools: &[DiscoveredTool], prefix: &str) -> Vec
 /// Clients whose `complete_with_tools` never returns tool calls (e.g. the
 /// offline client) fall through on the first iteration, so offline behavior
 /// stays deterministic.
+pub(crate) struct ToolLoopOutput {
+    pub text: String,
+    pub evidence: Vec<EvidenceEntry>,
+}
+
 pub(crate) async fn tool_loop(
     llm: &dyn LlmClient,
     tools: &[ToolSpec],
     dispatcher: &dyn ToolDispatcher,
     mut messages: Vec<ChatMessage>,
-) -> AgentResult<String> {
+    evidence_offset: usize,
+) -> AgentResult<ToolLoopOutput> {
+    let mut evidence = Vec::new();
     for _ in 0..MAX_TOOL_ROUNDS {
         let (text, calls) = llm.complete_with_tools(&messages, tools).await?;
         if calls.is_empty() {
-            return Ok(text);
+            return Ok(ToolLoopOutput { text, evidence });
         }
         messages.push(ChatMessage::assistant_tool_calls(text, calls.clone()));
         for call in &calls {
             let result = dispatcher.call(call).await;
+            evidence.push(EvidenceEntry::from_tool_result(
+                evidence_offset + evidence.len() + 1,
+                &call.name,
+                &result,
+            ));
             messages.push(ChatMessage::tool(&call.id, &call.name, result));
         }
     }
     // Round cap reached: ask for a plain final answer without tools.
-    llm.complete(&messages).await
+    Ok(ToolLoopOutput {
+        text: llm.complete(&messages).await?,
+        evidence,
+    })
 }
 
 /// Local tools (detect / lint / FS / allowlisted commands), path-confined.
@@ -452,6 +476,10 @@ fn execute_local_tool_sync(
             let target = resolve_detect_path(project_root, arguments)?;
             scan_output(&target)
         }
+        "triage_project" => {
+            let target = resolve_detect_path(project_root, arguments)?;
+            security_triage_output(&target)
+        }
         "read_file" => {
             let path = require_str(arguments, "path")?;
             fs_tools::read_file(project_root, path)
@@ -585,7 +613,128 @@ fn scan_output(project: &Path) -> Result<serde_json::Value, String> {
     let report = registry
         .scan_all(project)
         .map_err(|error| error.to_string())?;
-    Ok(report.to_lint_compat_json())
+    serde_json::to_value(report).map_err(|error| error.to_string())
+}
+
+fn security_triage_output(project: &Path) -> Result<serde_json::Value, String> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use altius_findings::{Confidence, Severity};
+
+    let detection_registry = DetectionRegistry::with_defaults();
+    let detected = detect_best(&detection_registry, project)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "no supported project detected; triage stopped fail-closed".to_owned())?;
+    let registry = altius_scanners::default_registry();
+    let report = registry
+        .scan_chain(project, detected.chain)
+        .map_err(|error| error.to_string())?;
+
+    let related_files: BTreeSet<_> = report
+        .findings
+        .iter()
+        .map(|finding| finding.location.file.clone())
+        .collect();
+    let mut by_pattern: BTreeMap<&str, Vec<&altius_findings::Finding>> = BTreeMap::new();
+    for finding in &report.findings {
+        by_pattern
+            .entry(finding.pattern_id.as_str())
+            .or_default()
+            .push(finding);
+    }
+
+    let triage = report
+        .findings
+        .iter()
+        .map(|finding| {
+            let has_precise_evidence = finding.location.start_line.is_some()
+                && (finding.location.snippet.is_some() || !finding.evidence.is_empty());
+            let disposition =
+                if finding.confidence == Confidence::Low || finding.evidence.is_empty() {
+                    "false_positive_likely"
+                } else if finding.severity >= Severity::High && has_precise_evidence {
+                    "true_positive_likely"
+                } else {
+                    "needs_review"
+                };
+            json!({
+                "finding_id": finding.id,
+                "pattern_id": finding.pattern_id,
+                "disposition_hint": disposition,
+                "scanner_severity": finding.severity.as_str(),
+                "recommended_severity": finding.severity.as_str(),
+                "confidence": finding.confidence.as_str(),
+                "reason": if has_precise_evidence {
+                    "scanner supplied a source span; inspect callers, validations, and reachability"
+                } else {
+                    "source context is incomplete; do not confirm before reading related code"
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let repeated_patterns = by_pattern
+        .into_iter()
+        .filter(|(_, findings)| findings.len() > 1)
+        .map(|(pattern_id, findings)| {
+            json!({
+                "kind": "repeated_pattern",
+                "pattern_id": pattern_id,
+                "finding_ids": findings.iter().map(|finding| finding.id.as_str()).collect::<Vec<_>>(),
+                "files": findings.iter().map(|finding| finding.location.file.as_str()).collect::<Vec<_>>(),
+                "rationale": "repeated matches may share one root cause; verify before merging"
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let pattern_ids: BTreeSet<_> = report
+        .findings
+        .iter()
+        .map(|finding| finding.pattern_id.as_str())
+        .collect();
+    let mut correlations = repeated_patterns;
+    if pattern_ids.contains("svm-missing-signer-check") && pattern_ids.contains("svm-arbitrary-cpi")
+    {
+        correlations.push(json!({
+            "kind": "compound_attack_hypothesis",
+            "patterns": ["svm-missing-signer-check", "svm-arbitrary-cpi"],
+            "rationale": "an unverified authority plus attacker-influenced CPI target can form an authorization-to-arbitrary-call path",
+            "verification": "trace the same instruction/account flow across handlers and helpers before raising severity"
+        }));
+    }
+
+    let exploit_rationale = report
+        .findings
+        .iter()
+        .map(|finding| {
+            json!({
+                "finding_id": finding.id,
+                "hypothesis": finding.attack_scenario.as_deref().unwrap_or(
+                    "attacker controls an input or account accepted at this source span; verify the missing validation and trace it to a sensitive state change or CPI"
+                ),
+                "required_verification": [
+                    "identify attacker-controlled input/account",
+                    "locate validation in this file and related helpers",
+                    "trace reachability to state mutation, value transfer, privilege change, or CPI",
+                    "identify concrete impact and blocking preconditions"
+                ]
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(json!({
+        "findings": report.findings,
+        "triage": triage,
+        "cross_file_correlations": correlations,
+        "exploit_rationale": exploit_rationale,
+        "related_files": related_files,
+        "confidence": {
+            "basis": "native scanner evidence plus deterministic hints",
+            "limitation": "hints are not confirmation; the security agent must inspect related code"
+        },
+        "detected_chain": detected.chain.as_str(),
+        "scanners": report.scanners
+    }))
 }
 
 fn bounded_redacted(value: &str) -> String {
@@ -768,6 +917,38 @@ solana-program = "2"
         assert!(names.contains(&"read_file".into()));
     }
 
+    #[test]
+    fn security_tools_are_read_only_and_include_triage() {
+        let names: Vec<_> = security_tools().into_iter().map(|tool| tool.name).collect();
+        assert!(names.contains(&"triage_project".into()));
+        assert!(names.contains(&"read_file".into()));
+        assert!(!names.contains(&"write_file".into()));
+        assert!(!names.contains(&"run_command".into()));
+    }
+
+    #[tokio::test]
+    async fn triage_project_returns_structured_cross_file_analysis() {
+        let project = native_project();
+        fs::write(
+            project.path().join("src/lib.rs"),
+            "let authority = next_account_info(iter)?;\ninvoke(&ix, &accounts)?;",
+        )
+        .unwrap();
+        let dispatcher = LocalTools::new(project.path());
+        let result = dispatcher.call(&call("triage_project", json!({}))).await;
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["ok"], true);
+        assert!(parsed["data"]["findings"].is_array());
+        assert!(parsed["data"]["triage"].is_array());
+        assert!(parsed["data"]["exploit_rationale"].is_array());
+        assert!(parsed["data"]["related_files"].is_array());
+        assert!(parsed["data"]["cross_file_correlations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["kind"] == "compound_attack_hypothesis"));
+    }
+
     /// Client that requests one `detect_project` call, then answers with text.
     struct ScriptedLlm {
         rounds: AtomicUsize,
@@ -820,10 +1001,13 @@ solana-program = "2"
                 ChatMessage::system("You are the ALTIUS EXPLORER agent."),
                 ChatMessage::user("detect this project"),
             ],
+            0,
         )
         .await
         .unwrap();
-        assert_eq!(text, "EXPLORATION: found a native project");
+        assert_eq!(text.text, "EXPLORATION: found a native project");
+        assert_eq!(text.evidence.len(), 1);
+        assert_eq!(text.evidence[0].id, "E1");
         assert_eq!(llm.rounds.load(Ordering::SeqCst), 2);
     }
 

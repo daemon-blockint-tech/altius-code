@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
 
-use altius_agents::{run_supervisor, LlmClient, OfflineLlmClient, OpenAiCompatibleClient};
+use altius_agents::{run_supervisor, LlmClient, OfflineLlmClient};
 use altius_protocol::editor_acp::{
     AgentCapabilities, ContentBlock, InitializeParams, InitializeResult, JsonRpcError,
     JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, NewSessionParams,
@@ -179,7 +179,8 @@ async fn run_prompt(offline: bool, params: &PromptParams) -> Result<PromptResult
         Arc::new(OfflineLlmClient)
     } else if std::env::var("ALTIUS_LLM_API_KEY").is_ok() || std::env::var("OPENAI_API_KEY").is_ok()
     {
-        Arc::new(OpenAiCompatibleClient::from_env().map_err(|error| error.to_string())?)
+        altius_agents::llm_from_env(altius_agents::TaskClass::General)
+            .map_err(|error| error.to_string())?
     } else {
         Arc::new(OfflineLlmClient)
     };

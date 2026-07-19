@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use altius_agents::{
-    parse_slash_skill, run_supervisor_outcome_for, LlmClient, OfflineLlmClient,
-    OpenAiCompatibleClient, SupervisorOptions, SupervisorOutcome,
+    llm_from_env, parse_slash_skill, run_supervisor_outcome_for, LlmClient, OfflineLlmClient,
+    SupervisorOptions, SupervisorOutcome, TaskClass,
 };
 use altius_core::redact_secrets;
 use altius_mcp::McpAttachments;
@@ -19,6 +19,7 @@ pub fn run_fleet_cmd(args: &FleetRunArgs) -> Result<(), CliError> {
 
     let prompt = args.prompt.clone();
     let offline = args.offline;
+    let project_root = args.project.clone();
     let project = args.project.display().to_string();
     let github_args = args.github.clone();
 
@@ -28,9 +29,7 @@ pub fn run_fleet_cmd(args: &FleetRunArgs) -> Result<(), CliError> {
         } else if std::env::var("ALTIUS_LLM_API_KEY").is_ok()
             || std::env::var("OPENAI_API_KEY").is_ok()
         {
-            Arc::new(
-                OpenAiCompatibleClient::from_env().map_err(|e| CliError::message(e.to_string()))?,
-            )
+            llm_from_env(TaskClass::General).map_err(|e| CliError::message(e.to_string()))?
         } else {
             eprintln!(
                 "altius: no ALTIUS_LLM_API_KEY/OPENAI_API_KEY — using OfflineLlmClient \
@@ -57,9 +56,20 @@ pub fn run_fleet_cmd(args: &FleetRunArgs) -> Result<(), CliError> {
         let grounded = format!("{prompt_body}\n\n[project_path={project}]");
         let attachments = McpAttachments::new();
         let github = crate::github_connector::attach(&github_args, &attachments).await?;
+        let memory_path = std::env::var_os("ALTIUS_MEMORY_DB")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| project_root.join(".altius/fleet-memory.db"));
+        let memory_store =
+            altius_graph::SqliteMemoryStore::open(&memory_path).map_err(|error| {
+                CliError::message(format!(
+                    "open fleet learning memory `{}`: {error}",
+                    memory_path.display()
+                ))
+            })?;
         let options = SupervisorOptions {
             agent_name,
             github,
+            memory_store: Some(Arc::new(memory_store) as Arc<dyn altius_graph::MemoryStore>),
             ..SupervisorOptions::default()
         };
 

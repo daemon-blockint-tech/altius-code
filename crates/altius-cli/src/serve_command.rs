@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use altius_agents::{
-    agent_name_for_route, build_supervisor_graph_with, parse_slash_skill,
+    agent_name_for_route, build_supervisor_graph_with, llm_from_env, parse_slash_skill,
     run_supervisor_outcome_with_options, BrowserTooling, FleetState, LlmClient, McpTools,
-    OfflineLlmClient, OpenAiCompatibleClient, SupervisorOptions, SupervisorOutcome,
+    OfflineLlmClient, SupervisorOptions, SupervisorOutcome, TaskClass,
 };
 use altius_core::{Budget, RunId};
 use altius_graph::{
@@ -194,10 +194,12 @@ impl FleetRunExecutor {
     /// Durable checkpoints and BeeAI→graph run mapping via SQLite (fleet serve default).
     fn with_durable_store(
         offline: bool,
-        options_template: SupervisorOptions,
+        mut options_template: SupervisorOptions,
         memory_store: SqliteMemoryStore,
     ) -> Self {
         let memory_store = Arc::new(memory_store);
+        options_template.memory_store =
+            Some(Arc::clone(&memory_store) as Arc<dyn altius_graph::MemoryStore>);
         let checkpointer: Arc<dyn Checkpointer<FleetState>> =
             Arc::new(MemoryStoreCheckpointer::new((*memory_store).clone()));
         Self {
@@ -388,6 +390,8 @@ fn options_for_run(template: &SupervisorOptions, agent_name: &str) -> Supervisor
         browser: template.browser.clone(),
         github: template.github.clone(),
         hooks: template.hooks.clone(),
+        memory_store: template.memory_store.clone(),
+        inference_policy: template.inference_policy.clone(),
     }
 }
 
@@ -411,8 +415,7 @@ fn llm_client(offline: bool) -> ProtocolResult<Arc<dyn LlmClient>> {
         return Ok(Arc::new(OfflineLlmClient));
     }
     if std::env::var("ALTIUS_LLM_API_KEY").is_ok() || std::env::var("OPENAI_API_KEY").is_ok() {
-        return OpenAiCompatibleClient::from_env()
-            .map(|client| Arc::new(client) as Arc<dyn LlmClient>)
+        return llm_from_env(TaskClass::General)
             .map_err(|error| altius_protocol::ProtocolError::Internal(error.to_string()));
     }
     Ok(Arc::new(OfflineLlmClient))
@@ -591,6 +594,7 @@ async fn build_supervisor_options(
             browser: browser_tooling,
             github: github_tooling,
             hooks: Vec::new(),
+            ..SupervisorOptions::default()
         },
         browser_enabled,
         github_enabled,

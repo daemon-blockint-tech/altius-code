@@ -2,15 +2,19 @@ use std::sync::Arc;
 
 use altius_core::{Budget, CorrelationId, RunId};
 use altius_graph::{
-    Checkpointer, ExecutionOutcome, Graph, GraphBuilder, GraphExecutor, InMemoryCheckpointer, Node,
-    NodeResult,
+    Checkpointer, ExecutionOutcome, Graph, GraphBuilder, GraphExecutor, InMemoryCheckpointer,
+    MemoryStore, Node, NodeResult,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AgentError, AgentResult};
+use crate::evidence::{format_ledger, ground_final_answer, EvidenceEntry};
 use crate::hooks::{HookedDispatcher, ToolHook};
-use crate::llm::{ChatMessage, LlmClient, OfflineLlmClient, ToolSpec};
+use crate::learning::{format_recall, LearningKind, LearningMemory, LearningRecord};
+use crate::llm::{
+    ChatMessage, InferencePolicy, LlmClient, OfflineLlmClient, PolicyLlmClient, TaskClass, ToolSpec,
+};
 use crate::permissions::{PermissionedDispatcher, ToolPolicy};
 use crate::project_memory;
 use crate::prompts;
@@ -76,6 +80,10 @@ pub struct SupervisorOptions {
     pub github: Option<GitHubTooling>,
     /// Deterministic Pre/Post tool hooks applied to every tool dispatcher.
     pub hooks: Vec<Arc<dyn ToolHook>>,
+    /// Durable learning store. Fleet serve supplies its existing SQLite store.
+    pub memory_store: Option<Arc<dyn MemoryStore>>,
+    /// Timeout, retry, and token-budget policy for each specialist call.
+    pub inference_policy: InferencePolicy,
 }
 
 /// Build Hooked → Permissioned → LocalTools for a role policy.
@@ -84,7 +92,15 @@ fn harness_dispatcher(
     base_policy: ToolPolicy,
     hooks: &[Arc<dyn ToolHook>],
 ) -> Arc<dyn ToolDispatcher> {
-    let policy = ToolPolicy::load_from_project(project_root, base_policy);
+    let mut policy = ToolPolicy::load_from_project(project_root, base_policy.clone());
+    // Project-local configuration may tighten a specialist policy, but cannot
+    // widen a read-only node into filesystem or shell mutation.
+    if !base_policy.allow_write {
+        policy.allow_write = false;
+    }
+    if !base_policy.allow_bash {
+        policy.allow_bash = false;
+    }
     let local = Arc::new(LocalTools::with_policy(project_root, &policy));
     let permissioned = Arc::new(PermissionedDispatcher::new(policy, local));
     Arc::new(HookedDispatcher::new(hooks.to_vec(), permissioned))
@@ -106,6 +122,8 @@ pub struct FleetState {
     /// When set (e.g. by `agent_name=browser` or `@Browser` in the prompt),
     /// the router preserves this route instead of re-parsing its reply.
     pub forced_route: Option<FleetRoute>,
+    /// Deterministic classifier output retained for audit/trajectory export.
+    pub route_decision: Option<crate::routing::RouteDecision>,
     pub exploration: Option<String>,
     pub code_notes: Option<String>,
     pub browser_notes: Option<String>,
@@ -113,6 +131,10 @@ pub struct FleetState {
     pub security_notes: Option<String>,
     pub critique: Option<String>,
     pub final_answer: Option<String>,
+    /// Structured evidence emitted by tool calls.
+    pub evidence: Vec<EvidenceEntry>,
+    /// IDs of historical learning records recalled into context.
+    pub recalled_memory: Vec<String>,
     pub trace: Vec<String>,
     pub correlation_id: Option<CorrelationId>,
 }
@@ -127,10 +149,16 @@ impl FleetState {
     }
 
     pub fn with_options(mut self, options: &SupervisorOptions) -> Self {
-        if let Some(route) = resolve_forced_route(options.agent_name.as_deref(), &self.prompt) {
-            self.forced_route = Some(route);
-            self.route = route;
+        let decision = crate::routing::classify_route(options.agent_name.as_deref(), &self.prompt);
+        if decision.forced {
+            self.forced_route = Some(decision.route);
         }
+        self.route = decision.route;
+        self.trace.push(format!(
+            "route_decision:{:?}:risk={:?}",
+            decision.route, decision.risk
+        ));
+        self.route_decision = Some(decision);
         self
     }
 }
@@ -178,6 +206,7 @@ struct LlmNode {
     /// External dispatcher (e.g. browser MCP), already hook-wrapped.
     dispatcher: Option<Arc<dyn ToolDispatcher>>,
     hooks: Vec<Arc<dyn ToolHook>>,
+    learning: Option<LearningMemory>,
     after: AfterFn,
 }
 
@@ -198,8 +227,14 @@ impl LlmNode {
             local_policy: None,
             dispatcher: None,
             hooks: Vec::new(),
+            learning: None,
             after: Box::new(after),
         }
+    }
+
+    fn with_learning(mut self, learning: Option<LearningMemory>) -> Self {
+        self.learning = learning;
+        self
     }
 
     fn with_local_tools(
@@ -252,7 +287,7 @@ impl Node<FleetState> for LlmNode {
             state.prompt = decision.sanitized;
         }
 
-        let system = match project_memory::load(&project_root) {
+        let mut system = match project_memory::load(&project_root) {
             Some(memory) => format!(
                 "{}\n\n{}",
                 self.system,
@@ -260,9 +295,34 @@ impl Node<FleetState> for LlmNode {
             ),
             None => self.system.to_owned(),
         };
+        if let Some(learning) = &self.learning {
+            if let Ok(records) = learning.recall(&project_root, &state.prompt).await {
+                state.recalled_memory = records
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| format!("M{}", index + 1))
+                    .collect();
+                if let Some(recall) = format_recall(&records) {
+                    system.push_str("\n\n");
+                    system.push_str(&recall);
+                }
+            }
+        }
+        system.push_str(
+            "\n\nGrounding contract: Cite evidence ledger IDs for factual claims about scans, \
+             builds, tests, or simulations. If no matching successful evidence exists, explicitly \
+             say the claim is unverified.",
+        );
+        let ledger = format_ledger(&state.evidence);
         let user_blob = format!(
-            "User prompt:\n{}\n\nPlan:\n{}\n\nExploration:\n{}\n\nCode notes:\n{}\n\nBrowser notes:\n{}\n\nGitHub notes:\n{}\n\nSecurity notes:\n{}\n\nCritique:\n{}",
+            "User prompt:\n{}\n\nRoute decision:\n{}\n\nPlan:\n{}\n\nExploration:\n{}\n\nCode notes:\n{}\n\nBrowser notes:\n{}\n\nGitHub notes:\n{}\n\nSecurity notes:\n{}\n\nCritique:\n{}\n\n{}",
             state.prompt,
+            state
+                .route_decision
+                .as_ref()
+                .and_then(|decision| serde_json::to_string(decision).ok())
+                .as_deref()
+                .unwrap_or("(none)"),
             state.plan.as_deref().unwrap_or("(none)"),
             state.exploration.as_deref().unwrap_or("(none)"),
             state.code_notes.as_deref().unwrap_or("(none)"),
@@ -270,39 +330,67 @@ impl Node<FleetState> for LlmNode {
             state.github_notes.as_deref().unwrap_or("(none)"),
             state.security_notes.as_deref().unwrap_or("(none)"),
             state.critique.as_deref().unwrap_or("(none)"),
+            ledger,
         );
         let messages = vec![ChatMessage::system(system), ChatMessage::user(user_blob)];
-        let text = if self.tools.is_empty() {
-            self.llm.complete(&messages).await
+        let evidence_offset = state.evidence.len();
+        let (text, new_evidence) = if self.tools.is_empty() {
+            (self.llm.complete(&messages).await, Vec::new())
         } else if let Some(policy) = &self.local_policy {
             let dispatcher = harness_dispatcher(&project_root, policy.clone(), &self.hooks);
-            tools::tool_loop(
+            let output = tools::tool_loop(
                 self.llm.as_ref(),
                 &self.tools,
                 dispatcher.as_ref(),
                 messages,
+                evidence_offset,
             )
-            .await
+            .await;
+            match output {
+                Ok(output) => (Ok(output.text), output.evidence),
+                Err(error) => (Err(error), Vec::new()),
+            }
         } else if let Some(dispatcher) = &self.dispatcher {
-            tools::tool_loop(
+            let output = tools::tool_loop(
                 self.llm.as_ref(),
                 &self.tools,
                 dispatcher.as_ref(),
                 messages,
+                evidence_offset,
             )
-            .await
+            .await;
+            match output {
+                Ok(output) => (Ok(output.text), output.evidence),
+                Err(error) => (Err(error), Vec::new()),
+            }
         } else {
             let local = LocalTools::new(&project_root);
-            tools::tool_loop(self.llm.as_ref(), &self.tools, &local, messages).await
-        }
-        .map_err(|e| altius_graph::GraphError::node_failed(self.name, e.to_string()))?;
+            let output = tools::tool_loop(
+                self.llm.as_ref(),
+                &self.tools,
+                &local,
+                messages,
+                evidence_offset,
+            )
+            .await;
+            match output {
+                Ok(output) => (Ok(output.text), output.evidence),
+                Err(error) => (Err(error), Vec::new()),
+            }
+        };
+        let text =
+            text.map_err(|e| altius_graph::GraphError::node_failed(self.name, e.to_string()))?;
+        state.evidence.extend(new_evidence);
 
         let out = rails.validate_output(&text);
-        let text = if out.safe {
+        let mut text = if out.safe {
             out.sanitized
         } else {
             crate::guardrails::GuardrailsPipeline::blocked_user_message(&out)
         };
+        if self.name == "finalize" {
+            text = ground_final_answer(&text, &state.evidence);
+        }
         Ok((self.after)(&text, state))
     }
 }
@@ -318,14 +406,25 @@ pub fn build_supervisor_graph_with(
     llm: Arc<dyn LlmClient>,
     options: &SupervisorOptions,
 ) -> AgentResult<Graph<FleetState>> {
-    let router_llm = Arc::clone(&llm);
-    let explorer_llm = Arc::clone(&llm);
-    let coder_llm = Arc::clone(&llm);
-    let browser_llm = Arc::clone(&llm);
-    let github_llm = Arc::clone(&llm);
-    let security_llm = Arc::clone(&llm);
-    let critic_llm = Arc::clone(&llm);
-    let finalize_llm = Arc::clone(&llm);
+    let policy_client = |task| {
+        Arc::new(PolicyLlmClient::single(
+            Arc::clone(&llm),
+            task,
+            options.inference_policy.clone(),
+        )) as Arc<dyn LlmClient>
+    };
+    let router_llm = policy_client(TaskClass::Routing);
+    let explorer_llm = policy_client(TaskClass::Exploration);
+    let coder_llm = policy_client(TaskClass::Coding);
+    let browser_llm = policy_client(TaskClass::Browser);
+    let github_llm = policy_client(TaskClass::General);
+    let security_llm = policy_client(TaskClass::Security);
+    let critic_llm = policy_client(TaskClass::Critique);
+    let finalize_llm = policy_client(TaskClass::General);
+    let learning = options
+        .memory_store
+        .as_ref()
+        .map(|store| LearningMemory::new(Arc::clone(store)));
 
     let mut hooks = crate::guardrails::default_guardrail_hooks();
     hooks.extend(options.hooks.iter().cloned());
@@ -338,7 +437,8 @@ pub fn build_supervisor_graph_with(
             state.browser_notes = Some(text.to_owned());
             NodeResult::Continue(state)
         },
-    );
+    )
+    .with_learning(learning.clone());
     if let Some(browser) = &options.browser {
         let browser_disp = wrap_with_hooks(Arc::clone(&browser.dispatcher), &hooks);
         browser_node = browser_node.with_dispatcher(browser.tools.clone(), browser_disp);
@@ -352,7 +452,8 @@ pub fn build_supervisor_graph_with(
             state.github_notes = Some(text.to_owned());
             NodeResult::Continue(state)
         },
-    );
+    )
+    .with_learning(learning.clone());
     if let Some(github) = &options.github {
         let github_disp = wrap_with_hooks(Arc::clone(&github.dispatcher), &hooks);
         github_node = github_node.with_dispatcher(github.tools.clone(), github_disp);
@@ -371,23 +472,22 @@ pub fn build_supervisor_graph_with(
         tools::security_tools(),
         ToolPolicy::read_only(),
         hooks.clone(),
-    );
+    )
+    .with_learning(learning.clone());
 
     let graph = GraphBuilder::new()
-        .add_node(LlmNode::new(
-            AgentRole::Router.as_str(),
-            prompts::ROUTER_SYSTEM,
-            router_llm,
-            |text, mut state| {
-                state.plan = Some(text.to_owned());
-                if let Some(forced) = state.forced_route {
-                    state.route = forced;
-                } else {
-                    state.route = parse_route_from_router(text);
-                }
-                NodeResult::Continue(state)
-            },
-        ))
+        .add_node(
+            LlmNode::new(
+                AgentRole::Router.as_str(),
+                prompts::ROUTER_SYSTEM,
+                router_llm,
+                |text, mut state| {
+                    state.plan = Some(text.to_owned());
+                    NodeResult::Continue(state)
+                },
+            )
+            .with_learning(learning.clone()),
+        )
         .add_node(
             LlmNode::new(
                 AgentRole::Explorer.as_str(),
@@ -404,7 +504,8 @@ pub fn build_supervisor_graph_with(
                 tools::explorer_tools(),
                 ToolPolicy::read_only(),
                 hooks.clone(),
-            ),
+            )
+            .with_learning(learning.clone()),
         )
         .add_node(
             LlmNode::new(
@@ -416,29 +517,36 @@ pub fn build_supervisor_graph_with(
                     NodeResult::Continue(state)
                 },
             )
-            .with_local_tools(tools::coder_tools(), ToolPolicy::coder(), hooks.clone()),
+            .with_local_tools(tools::coder_tools(), ToolPolicy::coder(), hooks.clone())
+            .with_learning(learning.clone()),
         )
         .add_node(browser_node)
         .add_node(github_node)
         .add_node(security_node)
-        .add_node(LlmNode::new(
-            AgentRole::Critic.as_str(),
-            prompts::CRITIC_SYSTEM,
-            critic_llm,
-            |text, mut state| {
-                state.critique = Some(text.to_owned());
-                NodeResult::Continue(state)
-            },
-        ))
-        .add_node(LlmNode::new(
-            "finalize",
-            prompts::FINALIZE_SYSTEM,
-            finalize_llm,
-            |text, mut state| {
-                state.final_answer = Some(text.to_owned());
-                NodeResult::Finish(state)
-            },
-        ))
+        .add_node(
+            LlmNode::new(
+                AgentRole::Critic.as_str(),
+                prompts::CRITIC_SYSTEM,
+                critic_llm,
+                |text, mut state| {
+                    state.critique = Some(text.to_owned());
+                    NodeResult::Continue(state)
+                },
+            )
+            .with_learning(learning.clone()),
+        )
+        .add_node(
+            LlmNode::new(
+                "finalize",
+                prompts::FINALIZE_SYSTEM,
+                finalize_llm,
+                |text, mut state| {
+                    state.final_answer = Some(text.to_owned());
+                    NodeResult::Finish(state)
+                },
+            )
+            .with_learning(learning),
+        )
         .set_entry(AgentRole::Router.as_str())
         .add_conditional_edge(AgentRole::Router.as_str(), |s: &FleetState| match s.route {
             FleetRoute::Explorer => Some("workers_explorer".into()),
@@ -477,19 +585,6 @@ pub fn build_supervisor_graph_with(
     Ok(graph)
 }
 
-fn parse_route_from_router(text: &str) -> FleetRoute {
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed
-            .strip_prefix("ROUTE:")
-            .or_else(|| trimmed.strip_prefix("Route:"))
-        {
-            return FleetRoute::parse(rest.trim());
-        }
-    }
-    FleetRoute::parse(text)
-}
-
 fn merge_worker_states(branches: Vec<FleetState>) -> FleetState {
     let mut out = branches.first().cloned().unwrap_or_default();
     for b in branches {
@@ -508,11 +603,22 @@ fn merge_worker_states(branches: Vec<FleetState>) -> FleetState {
         if b.security_notes.is_some() {
             out.security_notes = b.security_notes;
         }
+        for evidence in b.evidence {
+            if !out.evidence.iter().any(|existing| {
+                existing.tool_name == evidence.tool_name
+                    && existing.result_hash == evidence.result_hash
+            }) {
+                out.evidence.push(evidence);
+            }
+        }
         for t in b.trace {
             if !out.trace.contains(&t) {
                 out.trace.push(t);
             }
         }
+    }
+    for (index, evidence) in out.evidence.iter_mut().enumerate() {
+        evidence.id = format!("E{}", index + 1);
     }
     out
 }
@@ -618,8 +724,48 @@ pub async fn run_supervisor_outcome_with_options(
     let executor = GraphExecutor::new(graph, checkpointer, budget);
     let run_id = RunId::new();
     let initial = FleetState::new(prompt).with_options(&options);
+    let project_root = tools::project_root_from_prompt(&initial.prompt);
+    let learning = options
+        .memory_store
+        .as_ref()
+        .map(|store| LearningMemory::new(Arc::clone(store)));
+    if let (Some(memory), Some(decision)) = (&learning, &initial.route_decision) {
+        let _ = memory
+            .remember(
+                LearningRecord::new(
+                    LearningKind::Decision,
+                    &format!(
+                        "routed {:?} task to {:?}: {}",
+                        decision.intent, decision.route, decision.reason
+                    ),
+                    decision.signals.clone(),
+                    &project_root,
+                    1.0,
+                )
+                .expect("route decision is non-secret"),
+            )
+            .await;
+    }
 
-    let outcome = match executor.run(run_id, initial).await? {
+    let execution = executor.run(run_id, initial).await;
+    let execution = match execution {
+        Ok(execution) => execution,
+        Err(error) => {
+            if let Some(memory) = &learning {
+                if let Some(record) = LearningRecord::new(
+                    LearningKind::Failure,
+                    &format!("supervisor execution failed: {error}"),
+                    [],
+                    &project_root,
+                    0.9,
+                ) {
+                    let _ = memory.remember(record).await;
+                }
+            }
+            return Err(error.into());
+        }
+    };
+    let outcome = match execution {
         ExecutionOutcome::Finished { state, .. } => SupervisorOutcome::Finished(state),
         ExecutionOutcome::Interrupted {
             reason,
@@ -632,6 +778,24 @@ pub async fn run_supervisor_outcome_with_options(
             state,
         },
     };
+    if let (Some(memory), SupervisorOutcome::Finished(state)) = (&learning, &outcome) {
+        let evidence = state
+            .evidence
+            .iter()
+            .map(|entry| format!("{}:{}:{:?}", entry.id, entry.tool_name, entry.status));
+        if let Some(record) = LearningRecord::new(
+            LearningKind::Success,
+            state
+                .final_answer
+                .as_deref()
+                .unwrap_or("supervisor completed"),
+            evidence,
+            &project_root,
+            0.8,
+        ) {
+            let _ = memory.remember(record).await;
+        }
+    }
     Ok((run_id, outcome))
 }
 
@@ -706,6 +870,7 @@ pub async fn run_supervisor_offline(prompt: impl Into<String>) -> AgentResult<(R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[tokio::test]
     async fn supervisor_golden_path_offline() {
@@ -722,17 +887,24 @@ mod tests {
         assert!(state.trace.iter().any(|t| t == "finalize"));
         // "find" routes to explorer-only
         assert_eq!(state.route, FleetRoute::Explorer);
+        assert_eq!(
+            state
+                .route_decision
+                .as_ref()
+                .map(|decision| decision.reason.as_str()),
+            Some("read-only investigation intent")
+        );
         assert!(state.code_notes.is_none());
     }
 
     #[tokio::test]
-    async fn supervisor_both_route_fanout() {
+    async fn supervisor_ambiguous_defaults_to_explorer() {
         let (_run_id, state) = run_supervisor_offline("summarize the workspace briefly")
             .await
             .unwrap();
-        assert_eq!(state.route, FleetRoute::Both);
+        assert_eq!(state.route, FleetRoute::Explorer);
         assert!(state.exploration.is_some());
-        assert!(state.code_notes.is_some());
+        assert!(state.code_notes.is_none());
         assert!(state.final_answer.unwrap().contains("FINAL"));
     }
 
@@ -908,5 +1080,26 @@ mod tests {
                 panic!("offline @Security run should not await: {reason}")
             }
         }
+    }
+
+    #[tokio::test]
+    async fn project_config_cannot_widen_read_only_security_policy() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project.path().join("altius.toml"),
+            "[tools]\nallow_write = true\nallow_bash = true\n",
+        )
+        .unwrap();
+        let dispatcher = harness_dispatcher(project.path(), ToolPolicy::read_only(), &[]);
+        let result = dispatcher
+            .call(&crate::llm::ToolCall {
+                id: "write-attempt".into(),
+                name: "write_file".into(),
+                arguments: json!({"path": "owned.txt", "content": "blocked"}),
+            })
+            .await;
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["ok"], false);
+        assert!(!project.path().join("owned.txt").exists());
     }
 }

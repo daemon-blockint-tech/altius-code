@@ -1,6 +1,4 @@
-use std::path::PathBuf;
-
-use altius_eval::{score_suite, GoldSuite};
+use altius_eval::{builtin_fixtures_root, score_suite, GoldSuite};
 
 use crate::cli::EvalArgs;
 use crate::error::CliError;
@@ -13,7 +11,7 @@ pub fn run_eval(args: &EvalArgs) -> Result<(), CliError> {
     } else {
         GoldSuite::builtin_smoke()
     };
-    let fixtures_root = args.fixtures.clone().unwrap_or_else(|| PathBuf::from("."));
+    let fixtures_root = args.fixtures.clone().unwrap_or_else(builtin_fixtures_root);
     let report =
         score_suite(&suite, &fixtures_root).map_err(|e| CliError::message(e.to_string()))?;
 

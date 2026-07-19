@@ -157,7 +157,7 @@ Dependency direction stays acyclic:
 | `coder` | Edits, builds, tests | `write_file` / `edit_file` / allowlisted `run_command`; no signing |
 | `browser` | Web automation via attached browser MCP | read/interact only; `browser_*` tool allowlist; no TxGuard path |
 | `github` | Repository, issue, checks, and pull-request operations via GitHub MCP | read-only by default; explicit branch/file/PR allowlist in `pull-requests` mode; merge/delete/admin/workflow dispatch denied |
-| `security` | Lint/audit review | read-only (detect/lint + FS read tools) |
+| `security` | Cross-file scan correlation, exploit reasoning, and scanner triage | read-only (`detect_project`, `lint_project`, `scan_project`, `triage_project`, FS reads/search); no shell/signing |
 | `deployer` | Produces `TxRequest`s only | must call TxGuard |
 | `payment` | x402 paid API calls | must call TxGuard (`TxKind::Payment`) |
 | `knowledge` | Neo4j + ontology queries | schema-gated graph writes |
@@ -165,6 +165,13 @@ Dependency direction stays acyclic:
 
 Router, explorer, coder, browser, GitHub, security, and critic are live graph
 nodes.
+Before the router model runs, an offline deterministic classifier emits a
+serialized `RouteDecision` (`intent`, `risk`, explicit `signals`, `reason`).
+Forced `agent_name`, `@Mention`, and slash-skill routes have highest priority;
+otherwise security/on-chain risk, browser URL interaction, GitHub resources,
+edit/build side effects, and read-only investigation are evaluated in that
+order. Ambiguous tasks fail toward the least-privilege explorer. The router
+model still plans, but cannot silently override this auditable decision.
 Explorer/coder/security run a bounded `tool_loop` (up to 12 rounds) through
 `HookedDispatcher` → `PermissionedDispatcher` → `LocalTools`. Project
 instructions load from `.altius.md` or `ALTIUS.md` at the project root
@@ -179,6 +186,35 @@ allow_bash = true
 # bash_allowlist = ["cargo", "anchor", "forge"]
 # deny_tools = ["run_command"]
 ```
+
+Each tool result also produces a bounded `EvidenceEntry`: stable per-run ID,
+tool name, success/failure status, compact SHA-256 digest, redacted excerpt,
+and finding/file references. Critic/finalize prompts require `[E…]` citations
+for scan/build/test/simulation claims. A deterministic finalize post-check
+adds an explicit unverified warning when no matching successful tool evidence
+exists.
+
+When a `MemoryStore` is attached (the durable SQLite store in `fleet serve`),
+the supervisor persists bounded, redacted failure/decision/success learning
+records in a project-scoped KV namespace. At most 64 records are retained;
+up to six relevant records / 4 KiB are recalled. Recalled text is labeled
+**untrusted historical memory** and must be re-verified. Probable private keys
+are rejected and credentials are redacted before persistence.
+`fleet run` uses `<project>/.altius/fleet-memory.db` by default; set
+`ALTIUS_MEMORY_DB` to choose another SQLite path.
+
+Inference is provider-neutral and policy-wrapped per task class. Capability
+preference controls ordering, while timeout, retry/backoff, fallback, and a
+fail-closed estimated-token budget apply to every call. Existing
+OpenAI-compatible configuration remains valid; optional knobs are:
+
+- `ALTIUS_LLM_FALLBACK_MODELS` — comma-separated model fallback chain
+- `ALTIUS_LLM_TIMEOUT_MS` — per-attempt timeout (default 120000)
+- `ALTIUS_LLM_MAX_RETRIES` — bounded retries per provider (default 2)
+- `ALTIUS_LLM_BACKOFF_MS` — exponential-backoff base (default 250)
+- `ALTIUS_LLM_TOKEN_BUDGET` — estimated per-specialist budget (default 64000)
+- `ALTIUS_LLM_COST_BUDGET_MICROUSD` — optional estimated cost ceiling
+- `ALTIUS_LLM_COST_PER_1K_TOKENS_MICROUSD` — deployment-specific cost estimate
 
 The browser node uses an optional external MCP attachment (e.g. Playwright)
 when `agent_name=browser` or the prompt contains `@Browser`, still wrapped
@@ -202,6 +238,42 @@ serialized, logged, persisted, or placed in model context. The default
 branch/file-write and pull-request create/update tools while continuing to
 deny merge, delete, release, workflow-dispatch, and repository-admin tools.
 Route with `agent_name=github`, `/github`, or `@GitHub`.
+
+### 4.1 Security specialist
+
+The Security route scans the complete project before reading supporting code.
+`triage_project` returns full canonical findings, deterministic disposition
+hints, repeated-pattern and compound-attack hypotheses, exploit-verification
+steps, and the related files that need inspection. The model must then inspect
+callers, account definitions, validation helpers, and sensitive sinks before
+classifying each candidate as `true_positive_likely`,
+`false_positive_likely`, or `needs_review`.
+
+Security output has explicit findings, triage, cross-file correlations, exploit
+rationale, confidence/limitations, and recommendations sections. Scanner
+matches remain candidates rather than proof. Project-local tool configuration
+may tighten this node but cannot enable writes or shell commands; dynamic PoC
+claims require an explicit local validation result. No security tool has a
+signing or TxGuard path.
+
+### 4.2 Offline security evaluation
+
+`altius-eval` ships small Altius-owned SVM fixtures with vulnerable cross-file
+and checked-clean projects. The deterministic native-scanner run measures
+precision, recall, Critical/High recall, false-positive rate, tool success
+rate, and elapsed latency. Token and provider-cost fields are nullable because
+the default run invokes no LLM; a future opt-in live evaluator can populate
+them without changing the report schema.
+
+Run the built-in suite from any working directory:
+
+```bash
+RUSTUP_TOOLCHAIN=stable cargo run -p altius-cli -- eval
+RUSTUP_TOOLCHAIN=stable cargo run -p altius-cli -- eval --markdown
+```
+
+Use `--suite path/to/gold.json --fixtures path/to/root` for another
+provenance-controlled corpus.
 
 ## 5. Payments (x402) flow
 
@@ -281,8 +353,8 @@ simulation-to-sign drift, blockhash-expiry, and replay limitations.
 - SPL-token x402 settlement.
 - Richer skills loader (`.altius/skills` packs), context compaction, and
   a general plugin marketplace (v0 packs are install-by-path only).
-- Eval harness; adversarial prompt-injection fixtures only if explicitly
-  enabled (no third-party leaked prompts, ever).
+- Adversarial prompt-injection evaluation fixtures remain future work and must
+  be explicitly enabled (no third-party leaked prompts, ever).
 - Optional Neo4j-backed `RunStore` (SQLite is the durable default today);
   push notifications beyond SSE.
 
@@ -310,3 +382,5 @@ simulation-to-sign drift, blockhash-expiry, and replay limitations.
   via `fleet serve --plugin` / `ALTIUS_FLEET_PLUGIN`.
 - CI scan surface: `altius scan --format sarif --fail-on-findings`
   (GitHub Actions `scan` job).
+- Offline SVM evaluation harness with labeled vulnerable/clean fixtures,
+  precision/recall/FPR, tool success, latency, and nullable token/cost metrics.

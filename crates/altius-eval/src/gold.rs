@@ -27,32 +27,41 @@ pub struct GoldSuite {
 }
 
 impl GoldSuite {
-    /// Built-in offline suite covering SVM lint themes + one EVM case shape.
+    /// Built-in, Altius-owned, offline SVM suite with vulnerable and clean
+    /// cross-file projects.
     pub fn builtin_smoke() -> Self {
         Self {
-            name: "altius-smoke".into(),
+            name: "altius-svm-smoke".into(),
             cases: vec![
                 GoldCase {
-                    id: "svm-missing-signer".into(),
-                    path: "fixtures/svm/missing_signer".into(),
+                    id: "svm-cross-file-attack-path".into(),
+                    path: "fixtures/svm/vulnerable_cross_file".into(),
                     chain: "solana".into(),
-                    labels: vec![GoldLabel {
-                        pattern_id: "svm-missing-signer-check".into(),
-                        severity: "medium".into(),
-                        file_contains: Some("lib.rs".into()),
-                    }],
+                    labels: vec![
+                        GoldLabel {
+                            pattern_id: "svm-missing-signer-check".into(),
+                            severity: "medium".into(),
+                            file_contains: Some("authority.rs".into()),
+                        },
+                        GoldLabel {
+                            pattern_id: "svm-arbitrary-cpi".into(),
+                            severity: "medium".into(),
+                            file_contains: Some("cpi.rs".into()),
+                        },
+                        GoldLabel {
+                            pattern_id: "svm-close-without-zeroing".into(),
+                            severity: "high".into(),
+                            file_contains: Some("close.rs".into()),
+                        },
+                    ],
                     expect_clean: false,
                 },
                 GoldCase {
-                    id: "evm-tx-origin".into(),
-                    path: "fixtures/evm/tx_origin".into(),
-                    chain: "evm".into(),
-                    labels: vec![GoldLabel {
-                        pattern_id: "evm-access-control".into(),
-                        severity: "medium".into(),
-                        file_contains: Some(".sol".into()),
-                    }],
-                    expect_clean: false,
+                    id: "svm-checked-clean".into(),
+                    path: "fixtures/svm/clean_checked".into(),
+                    chain: "solana".into(),
+                    labels: vec![],
+                    expect_clean: true,
                 },
             ],
         }
