@@ -15,7 +15,16 @@ export function truncate(text: string, max: number): string {
   return text.slice(0, max) + '...'
 }
 
-export function messageText(role: string, parts: { content_type: string; content: string }[]): string {
+export function messageText(role: string, messages: { role: string; parts: { content_type: string; content: string }[] }[]): string {
+  return messages
+    .filter((m) => m.role === role || role === '')
+    .flatMap((m) => m.parts)
+    .filter((p) => p.content_type === 'text/plain')
+    .map((p) => p.content)
+    .join('\n')
+}
+
+export function partsText(parts: { content_type: string; content: string }[]): string {
   return parts
     .filter((p) => p.content_type === 'text/plain')
     .map((p) => p.content)

@@ -1,7 +1,7 @@
 'use client'
 
 import type { Run } from '@/lib/types'
-import { messageText, formatTime, truncate, cn } from '@/lib/utils'
+import { partsText, formatTime, truncate, cn } from '@/lib/utils'
 import { CheckCircle2, XCircle, Clock, Loader2, AlertCircle } from 'lucide-react'
 
 const statusConfig: Record<string, { icon: typeof CheckCircle2; color: string; label: string }> = {
@@ -33,7 +33,7 @@ export function TaskSidebar({ runs, activeRunId, onSelect }: TaskSidebarProps) {
             {runs.map((run) => {
               const cfg = statusConfig[run.status] || statusConfig.created
               const Icon = cfg.icon
-              const prompt = messageText('user', run.input)
+              const prompt = partsText(run.input.flatMap((m) => m.parts))
               return (
                 <li key={run.run_id}>
                   <button

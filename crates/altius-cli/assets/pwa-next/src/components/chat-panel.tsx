@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import type { Message } from '@/lib/types'
-import { messageText, cn } from '@/lib/utils'
+import { partsText, cn } from '@/lib/utils'
 import { Check, X, Loader2 } from 'lucide-react'
 
 interface ChatPanelProps {
@@ -37,7 +37,7 @@ export function ChatPanel({ messages, busy, awaitingApproval, onApprove }: ChatP
       ) : (
         <div className="max-w-3xl mx-auto space-y-4">
           {messages.map((msg, i) => {
-            const text = messageText(msg.role, msg.parts)
+            const text = partsText(msg.parts)
             const isUser = msg.role === 'user'
             return (
               <div

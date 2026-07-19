@@ -58,25 +58,27 @@ export default function Home() {
 
       // Stream SSE events
       for await (const event of client.streamEvents(run.run_id)) {
-        if (event.type === 'run') {
-          setActiveRun(event.run)
-          if (event.run.status === 'awaiting' && event.run.approval) {
+        if (event.type === 'run' && event.run) {
+          const r = event.run
+          setActiveRun(r)
+          if (r.status === 'awaiting' && r.approval) {
+            const ap = r.approval
             setMessages((prev) => [
               ...prev,
-              agentText(event.run.approval!.summary),
+              agentText(ap.summary),
             ])
           }
-          if (event.run.status === 'completed') {
-            setMessages((prev) => [...prev, ...event.run.output])
+          if (r.status === 'completed') {
+            setMessages((prev) => [...prev, ...r.output])
           }
-          if (event.run.status === 'failed') {
+          if (r.status === 'failed') {
             setMessages((prev) => [
               ...prev,
-              agentText(`Error: ${event.run.error || 'unknown'}`),
+              agentText(`Error: ${r.error || 'unknown'}`),
             ])
           }
-        } else if (event.type === 'message') {
-          setMessages((prev) => [...prev, event.message])
+        } else if (event.type === 'message' && event.message) {
+          setMessages((prev) => [...prev, event.message!])
         }
       }
     } catch (err) {
@@ -104,10 +106,11 @@ export default function Home() {
       ])
       // Re-stream events
       for await (const event of client.streamEvents(run.run_id)) {
-        if (event.type === 'run') {
-          setActiveRun(event.run)
-          if (event.run.status === 'completed') {
-            setMessages((prev) => [...prev, ...event.run.output])
+        if (event.type === 'run' && event.run) {
+          const r = event.run
+          setActiveRun(r)
+          if (r.status === 'completed') {
+            setMessages((prev) => [...prev, ...r.output])
           }
         }
       }
