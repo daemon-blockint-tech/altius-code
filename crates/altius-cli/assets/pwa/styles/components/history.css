@@ -1,0 +1,51 @@
+/* History */
+
+.history-section {
+  display: grid;
+  gap: var(--size-xs);
+  min-height: 0;
+  overflow: auto;
+}
+
+.history-heading {
+  margin: 0 0 var(--size-xs);
+  color: var(--fg-quieter);
+  font-family: var(--font-display);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.history-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history-item {
+  overflow: hidden;
+  width: 100%;
+  padding: var(--size-sm) var(--size-md);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--fg-quiet);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-item:hover {
+  background: var(--bg-subtle);
+  color: var(--fg);
+}
+
+.history-item.active {
+  background: var(--bg-subtle);
+  color: var(--fg);
+}

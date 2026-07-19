@@ -1,0 +1,84 @@
+/* Composer */
+
+.composer {
+  padding: var(--size-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+  transition: border-color var(--duration-quick) var(--ease-out);
+}
+
+.composer:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--border-focus), transparent 82%);
+}
+
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 118px;
+  padding: var(--size-xs);
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg);
+}
+
+.composer textarea::placeholder {
+  color: var(--fg-quieter);
+}
+
+.composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-md);
+  margin-top: var(--size-md);
+}
+
+.composer-hint {
+  margin: var(--size-sm) var(--size-xs) 0;
+  color: var(--fg-quieter);
+  font: var(--text-xs) / 1 var(--font-mono);
+}
+
+.composer-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--size-sm);
+}
+
+/* Agent pills */
+
+.agent-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-quiet);
+  border-radius: var(--radius-full);
+}
+
+.agent-pill {
+  min-height: 30px;
+  padding: 0 var(--size-md);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--fg-quiet);
+  cursor: pointer;
+  font-weight: var(--weight-medium);
+}
+
+.agent-pill:hover {
+  color: var(--fg);
+}
+
+.agent-pill[aria-pressed="true"] {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}

@@ -1,0 +1,64 @@
+/* Layout — main content, views, headings, eyebrow */
+
+.main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--size-xl);
+}
+
+.main-inner {
+  display: grid;
+  gap: var(--size-xl);
+}
+
+.main-inner.home {
+  min-height: calc(100dvh - 2 * var(--size-xl));
+  align-content: center;
+}
+
+.view {
+  display: grid;
+  gap: var(--size-lg);
+}
+
+.view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-md);
+}
+
+.home-head {
+  display: grid;
+  gap: var(--size-xs);
+}
+
+.page-heading {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+}
+
+.section-heading {
+  margin: 0;
+  font-family: var(--font-display);
+  color: var(--fg-quiet);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.eyebrow {
+  margin: 0 0 var(--size-xs);
+  color: var(--accent-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.error-text {
+  margin: 0;
+  color: var(--bad);
+  font-size: var(--text-sm);
+}

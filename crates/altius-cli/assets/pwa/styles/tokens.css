@@ -1,0 +1,175 @@
+/* Altius Fleet design tokens — Anthropic/Claude token system. */
+
+:root {
+  color-scheme: light;
+
+  /* ─── Primitive Colors ─────────────────────────────── */
+  --color-dark: #141413;
+  --color-light: #faf9f5;
+  --color-mid-gray: #b0aea5;
+  --color-light-gray: #e8e6dc;
+  --color-orange: #d97757;
+  --color-blue: #6a9bcc;
+  --color-green: #788c5d;
+
+  /* ─── Semantic Tokens (Light mode default) ─────────── */
+  --bg-primary: var(--color-light);
+  --bg-secondary: var(--color-light-gray);
+  --bg-elevated: #ffffff;
+  --bg-inverse: var(--color-dark);
+
+  --text-primary: var(--color-dark);
+  --text-secondary: var(--color-mid-gray);
+  --text-inverse: var(--color-light);
+  --text-accent: var(--color-orange);
+
+  --border-subtle: var(--color-light-gray);
+  --border-strong: var(--color-mid-gray);
+
+  --accent-primary: var(--color-orange);
+  --accent-secondary: var(--color-blue);
+  --accent-tertiary: var(--color-green);
+
+  /* ─── Typography ───────────────────────────────────── */
+  --font-display: "Poppins", Arial, sans-serif;
+  --font-body: "Lora", Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-4xl: 2.25rem;
+
+  --leading-tight: 1.25;
+  --leading-snug: 1.375;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+
+  /* ─── Spacing (4px base) ───────────────────────────── */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* ─── Radii & Shadows ──────────────────────────────── */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  --shadow-sm: 0 1px 2px rgba(20, 20, 19, 0.05);
+  --shadow-md: 0 4px 12px rgba(20, 20, 19, 0.08);
+  --shadow-lg: 0 12px 32px rgba(20, 20, 19, 0.12);
+
+  /* ─── Extended Semantic Tokens (component support) ─── */
+  --accent-hover: #c46843;
+  --accent-soft: #f5e6dd;
+  --text-tertiary: #c4c2b8;
+  --bg-quiet: var(--color-light-gray);
+  --bg-subtlest: #f5f3ec;
+  --bg-offset: #d8d5c8;
+  --ok: var(--accent-tertiary);
+  --ok-soft: #eef0e8;
+  --warn: #9a5d00;
+  --warn-soft: #fff1d5;
+  --bad: #b42335;
+  --bad-soft: #fde8eb;
+  --weight-medium: 500;
+  --weight-semibold: 650;
+  --duration-quick: 150ms;
+  --duration-normal: 300ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --shadow-card: var(--shadow-md);
+  --radius-xl: 16px;
+
+  /* ─── Backward-compatible aliases ─── */
+  --bg-base: var(--bg-primary);
+  --bg-raised: var(--bg-elevated);
+  --bg-subtle: var(--bg-secondary);
+  --fg: var(--text-primary);
+  --fg-quiet: var(--text-secondary);
+  --fg-quieter: var(--text-tertiary);
+  --fg-inverse: var(--text-inverse);
+  --border-subtlest: var(--border-subtle);
+  --border-moderate: var(--border-strong);
+  --border-focus: var(--accent-primary);
+  --accent: var(--accent-primary);
+  --accent-blue: var(--accent-secondary);
+  --font-sans: var(--font-body);
+  --size-xs: var(--space-1);
+  --size-sm: var(--space-2);
+  --size-md: var(--space-3);
+  --size-lg: var(--space-4);
+  --size-xl: var(--space-6);
+}
+
+/* ─── Dark Mode (system preference) ─────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --bg-primary: var(--color-dark);
+    --bg-secondary: #1c1c1a;
+    --bg-elevated: #262624;
+    --bg-inverse: var(--color-light);
+    --text-primary: var(--color-light);
+    --text-secondary: var(--color-mid-gray);
+    --text-inverse: var(--color-dark);
+    --text-accent: var(--color-orange);
+    --border-subtle: #2e2e2c;
+    --border-strong: var(--color-mid-gray);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
+    --accent-hover: #e08868;
+    --accent-soft: #3a2a22;
+    --text-tertiary: #8a887e;
+    --bg-quiet: #2a2823;
+    --bg-subtlest: #1a1916;
+    --bg-offset: #353330;
+    --ok-soft: #2a3322;
+    --warn: #f0bd5a;
+    --warn-soft: #3c2e13;
+    --bad: #ff8897;
+    --bad-soft: #401e27;
+  }
+}
+
+/* ─── Dark Mode (explicit) ──────────────────────────── */
+[data-theme="dark"],
+.dark {
+  color-scheme: dark;
+  --bg-primary: var(--color-dark);
+  --bg-secondary: #1c1c1a;
+  --bg-elevated: #262624;
+  --bg-inverse: var(--color-light);
+  --text-primary: var(--color-light);
+  --text-secondary: var(--color-mid-gray);
+  --text-inverse: var(--color-dark);
+  --text-accent: var(--color-orange);
+  --border-subtle: #2e2e2c;
+  --border-strong: var(--color-mid-gray);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --accent-hover: #e08868;
+  --accent-soft: #3a2a22;
+  --text-tertiary: #8a887e;
+  --bg-quiet: #2a2823;
+  --bg-subtlest: #1a1916;
+  --bg-offset: #353330;
+  --ok-soft: #2a3322;
+  --warn: #f0bd5a;
+  --warn-soft: #3c2e13;
+  --bad: #ff8897;
+  --bad-soft: #401e27;
+}

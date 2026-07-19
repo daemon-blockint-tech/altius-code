@@ -1,0 +1,14 @@
+/* Cards */
+
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-warn {
+  border-color: color-mix(in srgb, var(--warn), transparent 55%);
+  background: var(--warn-soft);
+}

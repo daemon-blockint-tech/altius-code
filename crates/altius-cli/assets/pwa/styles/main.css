@@ -1,0 +1,65 @@
+/* Altius Fleet — main entry. Cascade layers: tokens → base → components → utilities. */
+
+@layer tokens, base, components, utilities;
+
+@import "tokens.css" layer(tokens);
+@import "base.css" layer(base);
+@import "components/button.css" layer(components);
+@import "components/card.css" layer(components);
+@import "components/badge.css" layer(components);
+@import "components/composer.css" layer(components);
+@import "components/nav.css" layer(components);
+@import "components/input.css" layer(components);
+@import "components/topbar.css" layer(components);
+@import "components/history.css" layer(components);
+@import "components/list-row.css" layer(components);
+@import "components/detail.css" layer(components);
+@import "components/layout.css" layer(components);
+
+/* ─── Utilities (responsive + reduced-motion overrides) ── */
+
+@layer utilities {
+  @media (max-width: 800px) {
+    .topbar {
+      flex-wrap: wrap;
+      padding: var(--size-sm) var(--size-lg);
+    }
+
+    .topbar-nav {
+      order: 3;
+      width: 100%;
+      margin-top: var(--size-xs);
+    }
+
+    .main {
+      padding: var(--size-lg);
+    }
+
+    .main-inner.home {
+      min-height: auto;
+    }
+
+    .page-heading {
+      font-size: 1.25rem;
+    }
+
+    /* Mobile: nav toggles Dispatch vs Runs */
+    body[data-mobile-view="dispatch"] [data-view-panel="runs"],
+    body[data-mobile-view="runs"] [data-view-panel="dispatch"] {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
+
+    .btn:active {
+      transform: none;
+    }
+  }
+}
