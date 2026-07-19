@@ -24,6 +24,7 @@ pub enum FleetRoute {
     Explorer,
     Coder,
     Browser,
+    GitHub,
     Security,
     #[default]
     Both,
@@ -34,6 +35,8 @@ impl FleetRoute {
         let lower = raw.to_ascii_lowercase();
         if lower.contains("security") {
             Self::Security
+        } else if lower.contains("github") {
+            Self::GitHub
         } else if lower.contains("browser") {
             Self::Browser
         } else if lower.contains("explorer") && !lower.contains("coder") && !lower.contains("both")
@@ -55,6 +58,13 @@ pub struct BrowserTooling {
     pub dispatcher: Arc<dyn ToolDispatcher>,
 }
 
+/// Optional GitHub MCP tooling injected at graph-build time.
+#[derive(Clone)]
+pub struct GitHubTooling {
+    pub tools: Vec<ToolSpec>,
+    pub dispatcher: Arc<dyn ToolDispatcher>,
+}
+
 /// Knobs for a supervisor pass (agent routing + optional browser attach).
 #[derive(Clone, Default)]
 pub struct SupervisorOptions {
@@ -62,6 +72,8 @@ pub struct SupervisorOptions {
     pub agent_name: Option<String>,
     /// Live browser MCP tools. When `None`, the browser node runs as plain LLM.
     pub browser: Option<BrowserTooling>,
+    /// Live GitHub MCP tools. When `None`, the GitHub node runs as plain LLM.
+    pub github: Option<GitHubTooling>,
     /// Deterministic Pre/Post tool hooks applied to every tool dispatcher.
     pub hooks: Vec<Arc<dyn ToolHook>>,
 }
@@ -97,6 +109,7 @@ pub struct FleetState {
     pub exploration: Option<String>,
     pub code_notes: Option<String>,
     pub browser_notes: Option<String>,
+    pub github_notes: Option<String>,
     pub security_notes: Option<String>,
     pub critique: Option<String>,
     pub final_answer: Option<String>,
@@ -122,7 +135,8 @@ impl FleetState {
     }
 }
 
-/// Map an agent name / `@Browser` / `@Security` / slash skill onto a forced route.
+/// Map an agent name / `@Browser` / `@GitHub` / `@Security` / slash skill
+/// onto a forced route.
 pub fn resolve_forced_route(agent_name: Option<&str>, prompt: &str) -> Option<FleetRoute> {
     if let Some(name) = agent_name {
         let lower = name.trim().trim_start_matches('@').to_ascii_lowercase();
@@ -131,6 +145,9 @@ pub fn resolve_forced_route(agent_name: Option<&str>, prompt: &str) -> Option<Fl
         }
         if lower == "browser" {
             return Some(FleetRoute::Browser);
+        }
+        if lower == "github" {
+            return Some(FleetRoute::GitHub);
         }
     }
     if let Some(skill) = crate::skills::parse_slash_skill(prompt) {
@@ -142,6 +159,9 @@ pub fn resolve_forced_route(agent_name: Option<&str>, prompt: &str) -> Option<Fl
     }
     if prompt_lower.contains("@browser") {
         return Some(FleetRoute::Browser);
+    }
+    if prompt_lower.contains("@github") {
+        return Some(FleetRoute::GitHub);
     }
     None
 }
@@ -241,12 +261,13 @@ impl Node<FleetState> for LlmNode {
             None => self.system.to_owned(),
         };
         let user_blob = format!(
-            "User prompt:\n{}\n\nPlan:\n{}\n\nExploration:\n{}\n\nCode notes:\n{}\n\nBrowser notes:\n{}\n\nSecurity notes:\n{}\n\nCritique:\n{}",
+            "User prompt:\n{}\n\nPlan:\n{}\n\nExploration:\n{}\n\nCode notes:\n{}\n\nBrowser notes:\n{}\n\nGitHub notes:\n{}\n\nSecurity notes:\n{}\n\nCritique:\n{}",
             state.prompt,
             state.plan.as_deref().unwrap_or("(none)"),
             state.exploration.as_deref().unwrap_or("(none)"),
             state.code_notes.as_deref().unwrap_or("(none)"),
             state.browser_notes.as_deref().unwrap_or("(none)"),
+            state.github_notes.as_deref().unwrap_or("(none)"),
             state.security_notes.as_deref().unwrap_or("(none)"),
             state.critique.as_deref().unwrap_or("(none)"),
         );
@@ -286,7 +307,8 @@ impl Node<FleetState> for LlmNode {
     }
 }
 
-/// Build the supervisor graph: router → explorer/coder/browser/security → critic → finalize.
+/// Build the supervisor graph:
+/// router → explorer/coder/browser/github/security → critic → finalize.
 pub fn build_supervisor_graph(llm: Arc<dyn LlmClient>) -> AgentResult<Graph<FleetState>> {
     build_supervisor_graph_with(llm, &SupervisorOptions::default())
 }
@@ -300,6 +322,7 @@ pub fn build_supervisor_graph_with(
     let explorer_llm = Arc::clone(&llm);
     let coder_llm = Arc::clone(&llm);
     let browser_llm = Arc::clone(&llm);
+    let github_llm = Arc::clone(&llm);
     let security_llm = Arc::clone(&llm);
     let critic_llm = Arc::clone(&llm);
     let finalize_llm = Arc::clone(&llm);
@@ -319,6 +342,20 @@ pub fn build_supervisor_graph_with(
     if let Some(browser) = &options.browser {
         let browser_disp = wrap_with_hooks(Arc::clone(&browser.dispatcher), &hooks);
         browser_node = browser_node.with_dispatcher(browser.tools.clone(), browser_disp);
+    }
+
+    let mut github_node = LlmNode::new(
+        AgentRole::GitHub.as_str(),
+        prompts::GITHUB_SYSTEM,
+        github_llm,
+        |text, mut state| {
+            state.github_notes = Some(text.to_owned());
+            NodeResult::Continue(state)
+        },
+    );
+    if let Some(github) = &options.github {
+        let github_disp = wrap_with_hooks(Arc::clone(&github.dispatcher), &hooks);
+        github_node = github_node.with_dispatcher(github.tools.clone(), github_disp);
     }
 
     let security_node = LlmNode::new(
@@ -382,6 +419,7 @@ pub fn build_supervisor_graph_with(
             .with_local_tools(tools::coder_tools(), ToolPolicy::coder(), hooks.clone()),
         )
         .add_node(browser_node)
+        .add_node(github_node)
         .add_node(security_node)
         .add_node(LlmNode::new(
             AgentRole::Critic.as_str(),
@@ -407,16 +445,19 @@ pub fn build_supervisor_graph_with(
             FleetRoute::Coder => Some("workers_coder".into()),
             FleetRoute::Both => Some("workers_both".into()),
             FleetRoute::Browser => Some("workers_browser".into()),
+            FleetRoute::GitHub => Some("workers_github".into()),
             FleetRoute::Security => Some("workers_security".into()),
         })
         .add_node(DispatchNode::explorer_only())
         .add_node(DispatchNode::coder_only())
         .add_node(DispatchNode::both())
         .add_node(DispatchNode::browser_only())
+        .add_node(DispatchNode::github_only())
         .add_node(DispatchNode::security_only())
         .add_edge("workers_explorer", AgentRole::Explorer.as_str())
         .add_edge("workers_coder", AgentRole::Coder.as_str())
         .add_edge("workers_browser", AgentRole::Browser.as_str())
+        .add_edge("workers_github", AgentRole::GitHub.as_str())
         .add_edge("workers_security", AgentRole::Security.as_str())
         .add_fanout_join(
             "workers_both",
@@ -427,6 +468,7 @@ pub fn build_supervisor_graph_with(
         .add_edge(AgentRole::Explorer.as_str(), AgentRole::Critic.as_str())
         .add_edge(AgentRole::Coder.as_str(), AgentRole::Critic.as_str())
         .add_edge(AgentRole::Browser.as_str(), AgentRole::Critic.as_str())
+        .add_edge(AgentRole::GitHub.as_str(), AgentRole::Critic.as_str())
         .add_edge(AgentRole::Security.as_str(), AgentRole::Critic.as_str())
         .add_edge(AgentRole::Critic.as_str(), "finalize")
         .build()
@@ -459,6 +501,9 @@ fn merge_worker_states(branches: Vec<FleetState>) -> FleetState {
         }
         if b.browser_notes.is_some() {
             out.browser_notes = b.browser_notes;
+        }
+        if b.github_notes.is_some() {
+            out.github_notes = b.github_notes;
         }
         if b.security_notes.is_some() {
             out.security_notes = b.security_notes;
@@ -496,6 +541,11 @@ impl DispatchNode {
     fn browser_only() -> Self {
         Self {
             name: "workers_browser",
+        }
+    }
+    fn github_only() -> Self {
+        Self {
+            name: "workers_github",
         }
     }
     fn security_only() -> Self {

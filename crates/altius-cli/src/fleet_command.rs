@@ -5,6 +5,7 @@ use altius_agents::{
     OpenAiCompatibleClient, SupervisorOptions, SupervisorOutcome,
 };
 use altius_core::redact_secrets;
+use altius_mcp::McpAttachments;
 
 use crate::cli::{FleetMcpArgs, FleetRunArgs, McpTransport};
 use crate::error::CliError;
@@ -19,6 +20,7 @@ pub fn run_fleet_cmd(args: &FleetRunArgs) -> Result<(), CliError> {
     let prompt = args.prompt.clone();
     let offline = args.offline;
     let project = args.project.display().to_string();
+    let github_args = args.github.clone();
 
     rt.block_on(async move {
         let llm: Arc<dyn LlmClient> = if offline {
@@ -53,8 +55,11 @@ pub fn run_fleet_cmd(args: &FleetRunArgs) -> Result<(), CliError> {
         };
 
         let grounded = format!("{prompt_body}\n\n[project_path={project}]");
+        let attachments = McpAttachments::new();
+        let github = crate::github_connector::attach(&github_args, &attachments).await?;
         let options = SupervisorOptions {
             agent_name,
+            github,
             ..SupervisorOptions::default()
         };
 

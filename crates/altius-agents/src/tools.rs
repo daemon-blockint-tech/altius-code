@@ -6,6 +6,7 @@
 //! they re-enter the conversation. Tool arguments come from LLM output and
 //! are treated as untrusted.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -28,6 +29,18 @@ const MAX_TOOL_RESULT_BYTES: usize = 16 * 1024;
 
 /// Default allowlist prefix for browser MCP tools (Playwright-style).
 pub const BROWSER_TOOL_PREFIX: &str = "browser_";
+
+/// GitHub connector capability exposed to the GitHub specialist.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GitHubAccess {
+    /// Repository, issue, workflow, and pull-request inspection only.
+    #[default]
+    ReadOnly,
+    /// Read access plus branch/file writes and pull-request creation/update.
+    /// Merge, delete, release, workflow-dispatch, and administration tools
+    /// remain unavailable.
+    PullRequests,
+}
 
 /// Execute one tool call and return a bounded, redacted result string.
 #[async_trait]
@@ -286,6 +299,7 @@ impl ToolDispatcher for LocalTools {
 pub struct McpTools {
     attachment: Arc<AttachedMcp>,
     allowed_prefix: String,
+    allowed_names: Option<HashSet<String>>,
 }
 
 impl McpTools {
@@ -293,11 +307,27 @@ impl McpTools {
         Self {
             attachment,
             allowed_prefix: allowed_prefix.into(),
+            allowed_names: None,
         }
     }
 
     pub fn browser(attachment: Arc<AttachedMcp>) -> Self {
         Self::new(attachment, BROWSER_TOOL_PREFIX)
+    }
+
+    /// GitHub MCP tools filtered through a capability allowlist.
+    pub fn github(attachment: Arc<AttachedMcp>, access: GitHubAccess) -> Self {
+        let allowed_names = attachment
+            .tools()
+            .iter()
+            .filter(|tool| github_tool_allowed(&tool.name, access))
+            .map(|tool| tool.name.clone())
+            .collect();
+        Self {
+            attachment,
+            allowed_prefix: String::new(),
+            allowed_names: Some(allowed_names),
+        }
     }
 
     pub fn allowed_prefix(&self) -> &str {
@@ -306,13 +336,38 @@ impl McpTools {
 
     /// Specs the LLM may see — already filtered by the allowlist prefix.
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
-        tool_specs_from_discovered(self.attachment.tools(), &self.allowed_prefix)
+        self.attachment
+            .tools()
+            .iter()
+            .filter(|tool| {
+                self.allowed_names
+                    .as_ref()
+                    .is_none_or(|names| names.contains(&tool.name))
+                    && (self.allowed_prefix.is_empty()
+                        || tool.name.starts_with(&self.allowed_prefix))
+            })
+            .map(|tool| ToolSpec {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                parameters: tool.parameters.clone(),
+            })
+            .collect()
     }
 }
 
 #[async_trait]
 impl ToolDispatcher for McpTools {
     async fn call(&self, call: &ToolCall) -> String {
+        if self
+            .allowed_names
+            .as_ref()
+            .is_some_and(|names| !names.contains(&call.name))
+        {
+            return envelope_err(format!(
+                "GitHub tool `{}` rejected by connector capability policy",
+                call.name
+            ));
+        }
         if !self.allowed_prefix.is_empty() && !call.name.starts_with(&self.allowed_prefix) {
             return envelope_err(format!(
                 "tool `{}` rejected: name must start with `{}`",
@@ -328,6 +383,32 @@ impl ToolDispatcher for McpTools {
             Err(error) => envelope_err(error.to_string()),
         }
     }
+}
+
+fn github_tool_allowed(name: &str, access: GitHubAccess) -> bool {
+    let base = name
+        .rsplit_once("__")
+        .map(|(_, suffix)| suffix)
+        .unwrap_or(name);
+    let read_only = ["get_", "list_", "search_", "read_", "whoami"]
+        .iter()
+        .any(|prefix| base.starts_with(prefix));
+    if read_only {
+        return true;
+    }
+    access == GitHubAccess::PullRequests
+        && matches!(
+            base,
+            "create_branch"
+                | "create_or_update_file"
+                | "push_files"
+                | "create_pull_request"
+                | "update_pull_request"
+                | "update_pull_request_branch"
+                | "add_issue_comment"
+                | "add_pull_request_review_comment"
+                | "request_copilot_review"
+        )
 }
 
 /// Execute one local tool call. Failures are reported inside the result

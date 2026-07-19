@@ -11,6 +11,8 @@ pub enum AgentRole {
     Critic,
     /// Web automation via an attached browser MCP server (`@Browser`).
     Browser,
+    /// GitHub repository and pull-request operations via GitHub MCP (`@GitHub`).
+    GitHub,
     /// Read-only vulnerability scanning (`@Security`).
     Security,
     /// Stub — must call TxGuard when implemented (Phase C adjacent).
@@ -34,6 +36,7 @@ impl AgentRole {
             Self::Coder => "coder",
             Self::Critic => "critic",
             Self::Browser => "browser",
+            Self::GitHub => "github",
             Self::Security => "security",
             Self::Deployer => "deployer",
             Self::Payment => "payment",
@@ -48,6 +51,7 @@ impl AgentRole {
             Self::Coder => prompts::CODER_SYSTEM,
             Self::Critic => prompts::CRITIC_SYSTEM,
             Self::Browser => prompts::BROWSER_SYSTEM,
+            Self::GitHub => prompts::GITHUB_SYSTEM,
             Self::Security => prompts::SECURITY_SYSTEM,
             Self::Deployer => prompts::DEPLOYER_STUB_SYSTEM,
             Self::Payment => prompts::PAYMENT_STUB_SYSTEM,
@@ -64,6 +68,7 @@ impl AgentRole {
                 | Self::Coder
                 | Self::Critic
                 | Self::Browser
+                | Self::GitHub
                 | Self::Security
         )
     }

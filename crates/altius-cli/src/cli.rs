@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(name = "altius", version, about = "Altius Code SVM tooling")]
@@ -100,6 +100,10 @@ pub struct FleetRunArgs {
     /// Use the deterministic offline LLM (no network). Useful for demos and CI.
     #[arg(long)]
     pub offline: bool,
+
+    /// Optional GitHub MCP connector.
+    #[command(flatten)]
+    pub github: GitHubMcpArgs,
 }
 
 #[derive(Debug, Parser)]
@@ -127,6 +131,10 @@ pub struct FleetServeArgs {
     #[arg(long)]
     pub browser_mcp_args: Option<String>,
 
+    /// Optional GitHub MCP connector.
+    #[command(flatten)]
+    pub github: GitHubMcpArgs,
+
     /// Bearer token required on every HTTP surface. Clients send
     /// `Authorization: Bearer <token>` or `?token=` (EventSource). A token is
     /// mandatory when binding to a non-loopback address.
@@ -143,6 +151,46 @@ pub struct FleetServeArgs {
     /// `examples/plugins/web3-starter.json`.
     #[arg(long, env = "ALTIUS_FLEET_PLUGIN")]
     pub plugin: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum GitHubAccessArg {
+    /// Repository/issue/pull-request inspection only.
+    #[default]
+    ReadOnly,
+    /// Also allow branch/file writes and pull-request creation/update.
+    PullRequests,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct GitHubMcpArgs {
+    /// GitHub streamable-HTTP MCP endpoint. Setting this enables the connector.
+    /// Example: https://api.githubcopilot.com/mcp/
+    #[arg(long, env = "ALTIUS_GITHUB_MCP_URL")]
+    pub github_mcp_url: Option<String>,
+
+    /// Name of the environment variable containing the GitHub bearer token.
+    /// The token value is never accepted as a CLI argument or sent to the LLM.
+    #[arg(
+        long,
+        env = "ALTIUS_GITHUB_TOKEN_ENV",
+        default_value = "GITHUB_TOKEN"
+    )]
+    pub github_token_env: String,
+
+    /// GitHub MCP capability exposed to the specialist.
+    #[arg(long, value_enum, default_value_t = GitHubAccessArg::ReadOnly)]
+    pub github_access: GitHubAccessArg,
+}
+
+impl Default for GitHubMcpArgs {
+    fn default() -> Self {
+        Self {
+            github_mcp_url: None,
+            github_token_env: "GITHUB_TOKEN".into(),
+            github_access: GitHubAccessArg::ReadOnly,
+        }
+    }
 }
 
 #[derive(Debug, Parser)]

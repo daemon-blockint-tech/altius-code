@@ -2,7 +2,7 @@
 //!
 //! This crate deliberately exposes no deploy, sign, payment, or broadcast tool.
 //! Optional client-side attach (`mcp-client` / `agent-lsp` features) talks to
-//! external MCP servers (browser automation, agent-lsp, …) over stdio.
+//! external MCP servers over stdio or authenticated streamable HTTP.
 
 mod server;
 
@@ -14,7 +14,8 @@ mod agent_lsp;
 
 #[cfg(feature = "mcp-client")]
 pub use mcp_client::{
-    attach_mcp, AttachedMcp, DiscoveredTool, McpAttachConfig, McpAttachments, McpClientError,
+    attach_mcp, attach_remote_mcp, AttachedMcp, DiscoveredTool, McpAttachConfig, McpAttachments,
+    McpClientError, McpRemoteConfig,
 };
 
 #[cfg(feature = "agent-lsp")]

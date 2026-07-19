@@ -382,6 +382,11 @@ impl LlmClient for OfflineLlmClient {
                 || (prompt_section.contains("lint") && prompt_section.contains("secur"))
             {
                 "security"
+            } else if prompt_section.contains("@github")
+                || prompt_section.contains("pull request")
+                || prompt_section.contains("github issue")
+            {
+                "github"
             } else if prompt_section.contains("@browser") {
                 "browser"
             } else if prompt_section.contains("refactor")
@@ -413,6 +418,11 @@ impl LlmClient for OfflineLlmClient {
         } else if system.contains("BROWSER") {
             format!(
                 "BROWSER: Offline pass for «{}». No live browser MCP tools were invoked.",
+                prompt_section.trim()
+            )
+        } else if system.contains("GITHUB") {
+            format!(
+                "GITHUB: Offline pass for «{}». No live GitHub MCP tools were invoked.",
                 prompt_section.trim()
             )
         } else if system.contains("SECURITY") {

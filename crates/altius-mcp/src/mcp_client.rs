@@ -11,7 +11,10 @@ use std::sync::Arc;
 use rmcp::{
     model::{CallToolRequestParams, CallToolResult, ContentBlock, Tool},
     service::{RoleClient, RunningService},
-    transport::{ConfigureCommandExt, TokioChildProcess},
+    transport::{
+        streamable_http_client::StreamableHttpClientTransportConfig, ConfigureCommandExt,
+        StreamableHttpClientTransport, TokioChildProcess,
+    },
     ServiceExt,
 };
 use serde::{Deserialize, Serialize};
@@ -26,6 +29,7 @@ const MAX_ATTACHMENTS: usize = 8;
 const MAX_NAME_LEN: usize = 64;
 const MAX_ENV_EXTRAS: usize = 32;
 const MAX_ENV_KEY_LEN: usize = 128;
+const MAX_URL_LEN: usize = 2048;
 const MAX_RESULT_BYTES: usize = 64 * 1024;
 
 /// Always-forwarded environment keys for MCP child processes.
@@ -45,6 +49,20 @@ pub struct McpAttachConfig {
     /// `XAUTHORITY` are typical for headed browsers.
     #[serde(default)]
     pub env_extras: Vec<String>,
+}
+
+/// How to attach to a remote streamable-HTTP MCP server.
+///
+/// Authentication is read from `authorization_token_env` at connect time.
+/// The token value is never serialized into config, logs, or API responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpRemoteConfig {
+    /// Logical attachment name (for example `"github"`).
+    pub name: String,
+    /// HTTPS MCP endpoint.
+    pub url: String,
+    /// Environment variable containing the bearer token.
+    pub authorization_token_env: String,
 }
 
 /// A tool discovered on an attached MCP server.
@@ -70,6 +88,8 @@ pub enum McpClientError {
     NotFound(String),
     #[error("too many MCP attachments (max {MAX_ATTACHMENTS})")]
     TooMany,
+    #[error("MCP credential environment variable `{0}` is missing or empty")]
+    MissingCredential(String),
 }
 
 /// Live attachment to one external MCP server.
@@ -164,6 +184,23 @@ impl McpAttachments {
         Ok(attached)
     }
 
+    pub async fn attach_remote(
+        &self,
+        config: McpRemoteConfig,
+    ) -> Result<Arc<AttachedMcp>, McpClientError> {
+        validate_remote_config(&config)?;
+        {
+            let guard = self.inner.read().await;
+            if guard.len() >= MAX_ATTACHMENTS && !guard.contains_key(&config.name) {
+                return Err(McpClientError::TooMany);
+            }
+        }
+        let attached = Arc::new(spawn_remote(config).await?);
+        let name = attached.name().to_owned();
+        self.inner.write().await.insert(name, Arc::clone(&attached));
+        Ok(attached)
+    }
+
     pub async fn get(&self, name: &str) -> Option<Arc<AttachedMcp>> {
         self.inner.read().await.get(name).cloned()
     }
@@ -185,6 +222,14 @@ impl McpAttachments {
 pub async fn attach_mcp(config: McpAttachConfig) -> Result<AttachedMcp, McpClientError> {
     validate_config(&config)?;
     spawn_attached(config).await
+}
+
+/// Attach directly to a remote streamable-HTTP MCP endpoint.
+pub async fn attach_remote_mcp(
+    config: McpRemoteConfig,
+) -> Result<AttachedMcp, McpClientError> {
+    validate_remote_config(&config)?;
+    spawn_remote(config).await
 }
 
 async fn spawn_attached(config: McpAttachConfig) -> Result<AttachedMcp, McpClientError> {
@@ -211,6 +256,34 @@ async fn spawn_attached(config: McpAttachConfig) -> Result<AttachedMcp, McpClien
         .await
         .map_err(|error| McpClientError::Start(name.clone(), error.to_string()))?;
 
+    let tools = service
+        .list_all_tools()
+        .await
+        .map_err(|error| McpClientError::Request(name.clone(), error.to_string()))?
+        .into_iter()
+        .map(discovered_from_rmcp)
+        .collect();
+
+    Ok(AttachedMcp {
+        name,
+        service,
+        tools,
+    })
+}
+
+async fn spawn_remote(config: McpRemoteConfig) -> Result<AttachedMcp, McpClientError> {
+    let token = std::env::var(&config.authorization_token_env)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| McpClientError::MissingCredential(config.authorization_token_env.clone()))?;
+    let name = config.name;
+    let transport_config =
+        StreamableHttpClientTransportConfig::with_uri(config.url).auth_header(token);
+    let transport = StreamableHttpClientTransport::from_config(transport_config);
+    let service = ()
+        .serve(transport)
+        .await
+        .map_err(|error| McpClientError::Start(name.clone(), error.to_string()))?;
     let tools = service
         .list_all_tools()
         .await
@@ -306,20 +379,7 @@ fn truncate_value(value: Value) -> Value {
 }
 
 fn validate_config(config: &McpAttachConfig) -> Result<(), McpClientError> {
-    if config.name.trim().is_empty() || config.name.len() > MAX_NAME_LEN {
-        return Err(McpClientError::InvalidConfig(
-            "name must be a non-empty bounded string".into(),
-        ));
-    }
-    if !config
-        .name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(McpClientError::InvalidConfig(
-            "name must be ascii alphanumeric / '-' / '_'".into(),
-        ));
-    }
+    validate_name(&config.name)?;
     if config.command.trim().is_empty() || config.command.len() > MAX_ARGUMENT_LEN {
         return Err(McpClientError::InvalidConfig(
             "command must be a non-empty bounded string".into(),
@@ -341,13 +401,53 @@ fn validate_config(config: &McpAttachConfig) -> Result<(), McpClientError> {
     if config
         .env_extras
         .iter()
-        .any(|key| key.is_empty() || key.len() > MAX_ENV_KEY_LEN)
+        .any(|key| !valid_env_key(key))
     {
         return Err(McpClientError::InvalidConfig(
-            "env_extras keys must be non-empty and bounded".into(),
+            "env_extras keys must be ASCII environment names and bounded".into(),
         ));
     }
     Ok(())
+}
+
+fn validate_remote_config(config: &McpRemoteConfig) -> Result<(), McpClientError> {
+    validate_name(&config.name)?;
+    if config.url.len() > MAX_URL_LEN || !config.url.starts_with("https://") {
+        return Err(McpClientError::InvalidConfig(
+            "remote MCP url must be a bounded HTTPS URL".into(),
+        ));
+    }
+    if !valid_env_key(&config.authorization_token_env) {
+        return Err(McpClientError::InvalidConfig(
+            "authorization_token_env must be a valid bounded ASCII environment name".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_name(name: &str) -> Result<(), McpClientError> {
+    if name.trim().is_empty() || name.len() > MAX_NAME_LEN {
+        return Err(McpClientError::InvalidConfig(
+            "name must be a non-empty bounded string".into(),
+        ));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(McpClientError::InvalidConfig(
+            "name must be ascii alphanumeric / '-' / '_'".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn valid_env_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= MAX_ENV_KEY_LEN
+        && key
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
 #[cfg(test)]
@@ -400,6 +500,22 @@ mod tests {
             env_extras: vec!["DISPLAY".into()],
         })
         .unwrap();
+    }
+
+    #[test]
+    fn accepts_secure_remote_config_and_rejects_http() {
+        validate_remote_config(&McpRemoteConfig {
+            name: "github".into(),
+            url: "https://api.githubcopilot.com/mcp/".into(),
+            authorization_token_env: "GITHUB_TOKEN".into(),
+        })
+        .unwrap();
+        assert!(validate_remote_config(&McpRemoteConfig {
+            name: "github".into(),
+            url: "http://example.com/mcp".into(),
+            authorization_token_env: "GITHUB_TOKEN".into(),
+        })
+        .is_err());
     }
 
     #[test]

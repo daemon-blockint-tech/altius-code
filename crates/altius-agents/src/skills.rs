@@ -22,6 +22,7 @@ pub fn known_skills() -> &'static [(&'static str, FleetRoute)] {
         ("scan", FleetRoute::Security),
         ("audit", FleetRoute::Security),
         ("browser", FleetRoute::Browser),
+        ("github", FleetRoute::GitHub),
         // Payment specialist graph node is still stubbed; route through
         // the supervisor so policy/prompts still apply.
         ("pay", FleetRoute::Both),
@@ -60,6 +61,7 @@ pub fn agent_name_for_route(route: FleetRoute) -> &'static str {
     match route {
         FleetRoute::Security => "security",
         FleetRoute::Browser => "browser",
+        FleetRoute::GitHub => "github",
         FleetRoute::Explorer | FleetRoute::Coder | FleetRoute::Both => "altius",
     }
 }
