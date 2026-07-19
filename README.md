@@ -39,6 +39,9 @@ audit, and an isolated signer.
   CI-friendly SARIF gate (see [Blockchain security scanning](#blockchain-security-scanning)).
 - **Multi-agent fleet** — a supervisor routes work to specialists (explorer,
   coder, security, browser) and exposes them over several protocol surfaces.
+- **Fleet Web UI** — a built-in Next.js PWA with streaming chat, run history,
+  approval cards, agent selector, dark mode, and mobile-responsive layout.
+- **Terminal UI** — an interactive ratatui-based TUI for quick local work.
 
 ## Workspace map
 
@@ -88,6 +91,47 @@ cron jobs, or any automation that needs an AI coding agent without a human
 at the keyboard. The `altius fleet run --prompt "…"` command drives the
 supervisor graph headlessly, with an `--offline` deterministic mode for
 demos and CI.
+
+### Fleet Web UI (PWA)
+
+`altius fleet serve` ships a built-in Next.js PWA at `/app/` — a chat-style
+interface for the multi-agent fleet with:
+
+- **Run history sidebar** — list, search, filter by status (active/done/failed)
+- **Streaming chat panel** — real-time SSE updates, message roles (user/agent/tool/system)
+- **Approval cards** — transaction previews with lamport deltas, invoked programs, compute units
+- **Agent selector** — pick from skills advertised in the A2A agent card
+- **Dark mode** — persisted to localStorage, Anthropic design tokens
+- **Mobile responsive** — sidebar becomes overlay drawer on small screens
+- **Keyboard shortcuts** — `Cmd+K` new chat, `Esc` close sidebar, `Cmd+Enter` submit
+
+The UI is a statically-exported Next.js app (source in
+[`crates/altius-cli/assets/pwa-next/`](crates/altius-cli/assets/pwa-next/))
+built to `out/` and copied into `assets/pwa/` for Axum's `ServeDir`. To rebuild:
+
+```sh
+cd crates/altius-cli/assets/pwa-next
+pnpm install && pnpm build
+cp -r out/* ../pwa/
+```
+
+Then start the server:
+
+```sh
+altius fleet serve --offline --bind 127.0.0.1:8788
+# Open http://127.0.0.1:8788/app/
+```
+
+### Terminal UI (TUI)
+
+Running `altius` with no subcommand launches an interactive terminal
+interface built with ratatui. It provides a split-pane layout for command
+input, output history, and status — useful for quick local work without
+leaving the terminal.
+
+```sh
+./target/release/altius
+```
 
 ### Editor Integration (ACP)
 
