@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use crate::error::{AgentError, AgentResult};
 
@@ -126,13 +127,18 @@ impl OpenAiCompatibleClient {
         base_url: impl Into<String>,
         api_key: impl Into<String>,
         model: impl Into<String>,
-    ) -> Self {
-        Self {
-            http: reqwest::Client::new(),
+    ) -> AgentResult<Self> {
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(120))
+            .build()
+            .map_err(|error| AgentError::config(format!("build LLM HTTP client: {error}")))?;
+        Ok(Self {
+            http,
             base_url: base_url.into().trim_end_matches('/').to_owned(),
             api_key: api_key.into(),
             model: model.into(),
-        }
+        })
     }
 
     pub fn from_env() -> AgentResult<Self> {
@@ -144,7 +150,7 @@ impl OpenAiCompatibleClient {
         let base_url = std::env::var("ALTIUS_LLM_BASE_URL")
             .unwrap_or_else(|_| "https://api.openai.com/v1".to_owned());
         let model = std::env::var("ALTIUS_LLM_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_owned());
-        Ok(Self::new(base_url, api_key, model))
+        Self::new(base_url, api_key, model)
     }
 }
 

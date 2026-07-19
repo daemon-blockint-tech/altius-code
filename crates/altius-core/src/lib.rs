@@ -11,4 +11,4 @@ mod redact;
 pub use budget::Budget;
 pub use error::{AltiusError, Result};
 pub use ids::{AgentId, CorrelationId, RunId, StepId};
-pub use redact::redact_secrets;
+pub use redact::{contains_probable_private_key, redact_secrets};

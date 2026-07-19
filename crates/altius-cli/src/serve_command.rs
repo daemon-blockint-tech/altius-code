@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -10,21 +11,79 @@ use altius_agents::{
 use altius_core::{Budget, RunId};
 use altius_graph::{Checkpointer, ExecutionOutcome, GraphExecutor, InMemoryCheckpointer};
 use altius_mcp::{McpAttachConfig, McpAttachments};
-use altius_protocol::a2a::{A2aState, AgentCapabilities, AgentCard, AgentSkill, EchoTaskHandler};
+use altius_protocol::a2a::{
+    A2aMessage, A2aState, AgentCapabilities, AgentCard, AgentSkill, Part, Task, TaskHandler,
+    TaskState, TaskStatus,
+};
 use altius_protocol::anp::{
     AgentDescription, AgentRegistry, AnpState, InMemoryRegistry, InterfaceDescription,
 };
 use altius_protocol::beeacp::{
-    BeeAcpState, Message, MessagePart, Run, RunExecutor, RunOutcome, SqliteRunStore,
+    require_bearer, BearerAuth, BeeAcpState, Message, MessagePart, Run, RunExecutor, RunOutcome,
+    SqliteRunStore,
 };
 use altius_protocol::Result as ProtocolResult;
 use async_trait::async_trait;
-use axum::Router;
-use tokio::sync::RwLock;
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::Json;
+use axum::routing::get;
+use axum::{middleware, Router};
+use tokio::sync::{RwLock, Semaphore};
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::cli::FleetServeArgs;
 use crate::error::CliError;
+
+/// Loopback binds may run without bearer auth for offline demos; every other
+/// bind address requires `--token` / `ALTIUS_FLEET_TOKEN`.
+fn validate_fleet_serve_auth(
+    bind: SocketAddr,
+    auth_token: &Option<String>,
+) -> Result<(), CliError> {
+    let token_set = auth_token
+        .as_ref()
+        .is_some_and(|token| !token.trim().is_empty());
+    if bind.ip().is_loopback() || token_set {
+        return Ok(());
+    }
+    Err(CliError::message(format!(
+        "refusing to serve on {bind} without bearer auth: set --token or ALTIUS_FLEET_TOKEN \
+         (no-auth is allowed only on loopback addresses such as 127.0.0.1 for offline demos)"
+    )))
+}
+
+#[derive(Clone)]
+struct FleetHealthState {
+    store: Option<Arc<dyn altius_protocol::beeacp::RunStore>>,
+}
+
+async fn health_handler() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "ok",
+        "service": "altius-fleet",
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
+}
+
+async fn ready_handler(
+    State(state): State<FleetHealthState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if let Some(store) = &state.store {
+        store
+            .list()
+            .await
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    }
+    Ok(Json(serde_json::json!({ "status": "ready" })))
+}
+
+fn health_routes(store: Option<Arc<dyn altius_protocol::beeacp::RunStore>>) -> Router {
+    Router::new()
+        .route("/health", get(health_handler))
+        .route("/ready", get(ready_handler))
+        .with_state(FleetHealthState { store })
+}
 
 /// Bridges the BeeAI ACP run lifecycle onto the fleet supervisor.
 ///
@@ -41,8 +100,89 @@ struct FleetRunExecutor {
     offline: bool,
     options_template: SupervisorOptions,
     checkpointer: Arc<InMemoryCheckpointer<FleetState>>,
+    run_slots: Arc<Semaphore>,
     /// BeeAI ACP run id → graph run id, for checkpoint lookups on resume.
     graph_runs: Arc<RwLock<HashMap<RunId, RunId>>>,
+}
+
+struct FleetA2aHandler {
+    offline: bool,
+    options_template: SupervisorOptions,
+    run_slots: Arc<Semaphore>,
+}
+
+impl FleetA2aHandler {
+    fn new(offline: bool, options_template: SupervisorOptions) -> Self {
+        Self {
+            offline,
+            options_template,
+            run_slots: Arc::new(Semaphore::new(4)),
+        }
+    }
+}
+
+#[async_trait]
+impl TaskHandler for FleetA2aHandler {
+    async fn handle(&self, message: A2aMessage) -> ProtocolResult<Task> {
+        let mut task = Task::submitted(message.clone());
+        let prompt = message
+            .parts
+            .iter()
+            .filter_map(|part| match part {
+                Part::Text { text } => Some(text.as_str()),
+                Part::Data { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if prompt.trim().is_empty() {
+            task.status = TaskStatus::now(TaskState::Rejected);
+            task.status.message = Some(A2aMessage::agent_text(
+                "A2A task requires at least one non-empty text part",
+            ));
+            return Ok(task);
+        }
+
+        let Ok(_permit) = Arc::clone(&self.run_slots).try_acquire_owned() else {
+            task.status = TaskStatus::now(TaskState::Failed);
+            task.status.message = Some(A2aMessage::agent_text(
+                "fleet is at its concurrent-run limit; retry later",
+            ));
+            return Ok(task);
+        };
+        let llm = llm_client(self.offline)?;
+        let checkpointer: Arc<dyn Checkpointer<FleetState>> = Arc::new(InMemoryCheckpointer::new());
+        let outcome = run_supervisor_outcome_with_options(
+            llm,
+            checkpointer,
+            fleet_budget(),
+            prompt,
+            self.options_template.clone(),
+        )
+        .await;
+        match outcome {
+            Ok((_run_id, SupervisorOutcome::Finished(state))) => {
+                let response = A2aMessage::agent_text(
+                    state
+                        .final_answer
+                        .unwrap_or_else(|| "(no final answer)".into()),
+                );
+                task.history.push(response.clone());
+                task.status = TaskStatus::now(TaskState::Completed);
+                task.status.message = Some(response);
+            }
+            Ok((_run_id, SupervisorOutcome::Awaiting { .. })) => {
+                task.status = TaskStatus::now(TaskState::InputRequired);
+                task.status.message = Some(A2aMessage::agent_text(
+                    "fleet execution requires human approval; use the BeeAI run API to resume",
+                ));
+            }
+            Err(error) => {
+                task.status = TaskStatus::now(TaskState::Failed);
+                task.status.message = Some(A2aMessage::agent_text(error.to_string()));
+            }
+        }
+        Ok(task)
+    }
 }
 
 impl FleetRunExecutor {
@@ -51,6 +191,7 @@ impl FleetRunExecutor {
             offline,
             options_template,
             checkpointer: Arc::new(InMemoryCheckpointer::new()),
+            run_slots: Arc::new(Semaphore::new(4)),
             graph_runs: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -134,6 +275,11 @@ impl FleetRunExecutor {
 #[async_trait]
 impl RunExecutor for FleetRunExecutor {
     async fn execute(&self, run: &Run) -> ProtocolResult<RunOutcome> {
+        let Ok(_permit) = Arc::clone(&self.run_slots).try_acquire_owned() else {
+            return Ok(RunOutcome::Failed(
+                "fleet is at its concurrent-run limit; retry later".into(),
+            ));
+        };
         let raw = flatten_messages(&run.input);
         let (agent_name, prompt) = if let Some(skill) = parse_slash_skill(&raw) {
             let body = if skill.remainder.is_empty() {
@@ -154,6 +300,11 @@ impl RunExecutor for FleetRunExecutor {
     }
 
     async fn resume(&self, run: &Run, message: Option<Message>) -> ProtocolResult<RunOutcome> {
+        let Ok(_permit) = Arc::clone(&self.run_slots).try_acquire_owned() else {
+            return Ok(RunOutcome::Failed(
+                "fleet is at its concurrent-run limit; retry later".into(),
+            ));
+        };
         if let Some(outcome) = self
             .try_resume_from_checkpoint(run, message.as_ref())
             .await?
@@ -414,10 +565,11 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
         .bind
         .parse()
         .map_err(|error| CliError::message(format!("invalid --bind address: {error}")))?;
+    let auth_token = args.token.clone().filter(|token| !token.trim().is_empty());
+    validate_fleet_serve_auth(bind, &auth_token)?;
     let public_url = args.public_url.clone();
     let offline = args.offline;
     let local_did = format!("did:wba:{}%3A{}:agent:altius", bind.ip(), bind.port());
-    let auth_token = args.token.clone().filter(|token| !token.trim().is_empty());
     let run_db_path = args.run_db.clone().unwrap_or_else(default_run_db_path);
     let serve_args = FleetServeArgs {
         bind: args.bind.clone(),
@@ -438,7 +590,10 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
         }
         let card = agent_card(&public_url, browser_enabled)?;
         let a2a = altius_protocol::a2a::router(
-            A2aState::new(card, Arc::new(EchoTaskHandler))
+            A2aState::new(
+                card,
+                Arc::new(FleetA2aHandler::new(offline, options_template.clone())),
+            )
                 .map_err(|error| CliError::message(error.to_string()))?,
         );
         let registry = Arc::new(InMemoryRegistry::new());
@@ -469,42 +624,54 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
         let index = pwa_dir.join("index.html");
         let pwa = ServeDir::new(&pwa_dir).not_found_service(ServeFile::new(index));
 
-        let app = if include_beeacp {
+        let (beeacp_store, protected) = if include_beeacp {
             let store = SqliteRunStore::open(&run_db_path).map_err(|error| {
                 CliError::message(format!("open run db `{}`: {error}", run_db_path.display()))
             })?;
+            let store: Arc<dyn altius_protocol::beeacp::RunStore> = Arc::new(store);
             let bee = altius_protocol::beeacp::router(
                 BeeAcpState::new(
-                    Arc::new(store),
+                    Arc::clone(&store),
                     Arc::new(FleetRunExecutor::new(offline, options_template)),
                 )
                 .with_auth_token(auth_token.clone()),
             );
-            Router::new()
+            let protected = Router::new()
                 .merge(bee)
                 .merge(a2a)
                 .merge(anp)
-                .nest_service("/app", pwa)
+                .nest_service("/app", pwa);
+            (Some(store), protected)
         } else {
-            Router::new()
-                .merge(a2a)
-                .merge(anp)
-                .nest_service("/app", pwa)
+            let protected = Router::new().merge(a2a).merge(anp).nest_service("/app", pwa);
+            (None, protected)
         };
+
+        // Protect every user-facing surface; leave /health and /ready open for probes.
+        let protected = protected.layer(middleware::from_fn_with_state(
+            BearerAuth::new(auth_token.clone()),
+            require_bearer,
+        ));
+        let app = Router::new()
+            .merge(health_routes(beeacp_store))
+            .merge(protected);
 
         let listener = tokio::net::TcpListener::bind(bind)
             .await
             .map_err(|error| CliError::message(error.to_string()))?;
         eprintln!("altius: listening on http://{bind}");
+        eprintln!("altius: health at http://{bind}/health (ready at /ready)");
         if include_beeacp {
             eprintln!("altius: BeeAI ACP runs at /runs (SSE at /runs/{{id}}/events)");
             eprintln!("altius: run db at {}", run_db_path.display());
             if auth_token.is_some() {
                 eprintln!(
-                    "altius: bearer auth ENABLED (send Authorization: Bearer <token> or ?token=)"
+                    "altius: bearer auth ENABLED (Authorization: Bearer <token>; ?token= on /runs/{{id}}/events only)"
                 );
             } else {
-                eprintln!("altius: bearer auth disabled (set --token or ALTIUS_FLEET_TOKEN)");
+                eprintln!(
+                    "altius: bearer auth disabled (loopback-only demo; set --token or ALTIUS_FLEET_TOKEN for remote bind)"
+                );
             }
         }
         eprintln!("altius: A2A agent card at /.well-known/agent-card.json");
@@ -521,4 +688,57 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
             .await
             .map_err(|error| CliError::message(error.to_string()))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_bind_requires_authentication() {
+        let bind: SocketAddr = "0.0.0.0:8788".parse().unwrap();
+        assert!(validate_fleet_serve_auth(bind, &None).is_err());
+        assert!(validate_fleet_serve_auth(bind, &Some("secret".into())).is_ok());
+    }
+
+    #[test]
+    fn loopback_bind_allows_local_demo_without_authentication() {
+        let bind: SocketAddr = "127.0.0.1:8788".parse().unwrap();
+        assert!(validate_fleet_serve_auth(bind, &None).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a2a_handler_executes_offline_fleet() {
+        let handler = FleetA2aHandler::new(true, SupervisorOptions::default());
+        let task = handler
+            .handle(A2aMessage {
+                role: "user".into(),
+                parts: vec![Part::Text {
+                    text: "inspect this project".into(),
+                }],
+                message_id: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(task.status.state, TaskState::Completed);
+        assert_eq!(task.history.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a2a_handler_rejects_data_only_task() {
+        let handler = FleetA2aHandler::new(true, SupervisorOptions::default());
+        let task = handler
+            .handle(A2aMessage {
+                role: "user".into(),
+                parts: vec![Part::Data {
+                    data: serde_json::json!({"unsupported": true}),
+                }],
+                message_id: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(task.status.state, TaskState::Rejected);
+    }
 }

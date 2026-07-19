@@ -1,0 +1,1 @@
+# Intentionally empty fixture for the CI SARIF scan gate (.github/workflows/rust.yml).

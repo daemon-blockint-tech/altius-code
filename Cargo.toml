@@ -9,23 +9,23 @@ license = "Apache-2.0"
 repository = "https://github.com/daemon-blockint-tech/altius-code"
 
 [workspace.dependencies]
-altius-core = { path = "crates/altius-core" }
-altius-graph = { path = "crates/altius-graph" }
-altius-agents = { path = "crates/altius-agents" }
-altius-mcp = { path = "crates/altius-mcp" }
-altius-protocol = { path = "crates/altius-protocol" }
-altius-payments = { path = "crates/altius-payments" }
-altius-memory = { path = "crates/altius-memory" }
-altius-ontology = { path = "crates/altius-ontology" }
-altius-wasm-agents = { path = "crates/altius-wasm-agents" }
-altius-findings = { path = "crates/altius-findings" }
-altius-detect = { path = "crates/altius-detect" }
-altius-scanners = { path = "crates/altius-scanners" }
-altius-svm-detect = { path = "crates/altius-svm-detect" }
-altius-svm-tools = { path = "crates/altius-svm-tools" }
-altius-eval = { path = "crates/altius-eval" }
-altius-txguard = { path = "crates/altius-txguard" }
-altius-signer = { path = "crates/altius-signer" }
+altius-core = { version = "0.1.0", path = "crates/altius-core" }
+altius-graph = { version = "0.1.0", path = "crates/altius-graph" }
+altius-agents = { version = "0.1.0", path = "crates/altius-agents" }
+altius-mcp = { version = "0.1.0", path = "crates/altius-mcp" }
+altius-protocol = { version = "0.1.0", path = "crates/altius-protocol" }
+altius-payments = { version = "0.1.0", path = "crates/altius-payments" }
+altius-memory = { version = "0.1.0", path = "crates/altius-memory" }
+altius-ontology = { version = "0.1.0", path = "crates/altius-ontology" }
+altius-wasm-agents = { version = "0.1.0", path = "crates/altius-wasm-agents" }
+altius-findings = { version = "0.1.0", path = "crates/altius-findings" }
+altius-detect = { version = "0.1.0", path = "crates/altius-detect" }
+altius-scanners = { version = "0.1.0", path = "crates/altius-scanners" }
+altius-svm-detect = { version = "0.1.0", path = "crates/altius-svm-detect" }
+altius-svm-tools = { version = "0.1.0", path = "crates/altius-svm-tools" }
+altius-eval = { version = "0.1.0", path = "crates/altius-eval" }
+altius-txguard = { version = "0.1.0", path = "crates/altius-txguard" }
+altius-signer = { version = "0.1.0", path = "crates/altius-signer" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -52,6 +52,6 @@ http = "1"
 base64 = "0.22"
 url = "2"
 rmcp = { version = "2.2", default-features = false, features = ["server", "client", "transport-io"] }
-wasmtime = "29"
+wasmtime = "43.0.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 proptest = "1"

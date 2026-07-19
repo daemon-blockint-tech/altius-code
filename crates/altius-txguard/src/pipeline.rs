@@ -135,7 +135,7 @@ impl<Sim: Simulator, App: ApprovalChannel> TxGuard<Sim, App> {
 
         // Stage 3: diff report, built from the simulation output only.
         info!(stage = "diff", "building simulation diff");
-        let diff = DiffReport::from_simulation(&simulation);
+        let diff = DiffReport::from_simulation_and_tx(&simulation, Some(&tx));
 
         // Stage 4: approval.
         info!(

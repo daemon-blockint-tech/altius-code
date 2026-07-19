@@ -217,6 +217,21 @@ impl Node<FleetState> for LlmNode {
     ) -> altius_graph::GraphResult<NodeResult<FleetState>> {
         state.trace.push(self.name.to_owned());
         let project_root = tools::project_root_from_prompt(&state.prompt);
+        let rails = crate::guardrails::GuardrailsPipeline::from_project(&project_root);
+
+        // Input rail — only on the entry router so specialists inherit a
+        // sanitized prompt without re-blocking security-domain language mid-graph.
+        if self.name == AgentRole::Router.as_str() {
+            let decision = rails.validate_input(&state.prompt);
+            if !decision.safe {
+                state.final_answer = Some(
+                    crate::guardrails::GuardrailsPipeline::blocked_user_message(&decision),
+                );
+                return Ok(NodeResult::Finish(state));
+            }
+            state.prompt = decision.sanitized;
+        }
+
         let system = match project_memory::load(&project_root) {
             Some(memory) => format!(
                 "{}\n\n{}",
@@ -260,6 +275,13 @@ impl Node<FleetState> for LlmNode {
             tools::tool_loop(self.llm.as_ref(), &self.tools, &local, messages).await
         }
         .map_err(|e| altius_graph::GraphError::node_failed(self.name, e.to_string()))?;
+
+        let out = rails.validate_output(&text);
+        let text = if out.safe {
+            out.sanitized
+        } else {
+            crate::guardrails::GuardrailsPipeline::blocked_user_message(&out)
+        };
         Ok((self.after)(&text, state))
     }
 }
@@ -282,7 +304,8 @@ pub fn build_supervisor_graph_with(
     let critic_llm = Arc::clone(&llm);
     let finalize_llm = Arc::clone(&llm);
 
-    let hooks = options.hooks.clone();
+    let mut hooks = crate::guardrails::default_guardrail_hooks();
+    hooks.extend(options.hooks.iter().cloned());
 
     let mut browser_node = LlmNode::new(
         AgentRole::Browser.as_str(),

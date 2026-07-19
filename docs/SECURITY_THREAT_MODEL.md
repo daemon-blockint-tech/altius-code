@@ -53,11 +53,12 @@ Production deployments should use a dedicated OS identity, a private
 owner-only socket directory, restrictive key-file permissions, and preferably
 a hardware/KMS backend when one is implemented.
 
-The current server removes a stale socket and binds a new one, but does not
-authenticate peer credentials or set socket permissions itself. Therefore UDS
-directory ownership and mode are an explicit deployment trust assumption.
-Do not place the socket in a world-writable shared directory without a
-protected subdirectory.
+The server sets the socket to owner-only mode (`0600`) before accepting
+connections, and the file backend refuses keypair files with any group or
+other permissions. It does not authenticate peer credentials, so all
+processes running as the signer OS user remain inside the trust boundary.
+Use a dedicated OS identity and do not place the socket in an unprotected
+shared directory.
 
 ### TxGuard as the signing choke point
 
@@ -88,6 +89,42 @@ host functions do not currently grant imports.
 HTTP bodies, JSON-RPC messages, identifiers, lists, opaque JSON, and x402
 challenges have explicit bounds before use or forwarding. Bounds limit resource
 abuse; they do not establish authenticity or semantic correctness.
+
+Fleet HTTP services default to loopback. A non-loopback bind is rejected unless
+a bearer token is configured, and that token gates all merged BeeAI ACP, A2A,
+ANP, and PWA routes. URL query authentication is accepted only by the SSE events
+route because browser `EventSource` cannot set request headers. TLS and token
+rotation remain deployment responsibilities; terminate TLS at a trusted reverse
+proxy and avoid putting tokens in persistent URLs or logs.
+
+#### Remote fleet (`altius fleet serve`)
+
+When the HTTP listener binds to anything other than a loopback address, startup
+**fails closed** unless `--token` or `ALTIUS_FLEET_TOKEN` is set. Treat the
+token like a session secret (equivalent to Claude Code Remote Control session
+URLs): rotate on compromise, prefer TLS termination in front of the bind, and
+never commit tokens to the repository.
+
+- **Loopback demos:** `127.0.0.1:8788` (default) may run without a token for
+  offline development; all other routes still honor policy/simulation/HITL inside
+  the supervisor.
+- **Remote clients:** send `Authorization: Bearer <token>` on REST calls.
+  For SSE (`EventSource`), append `?token=<token>` only on `/runs/{id}/events`
+  (EventSource cannot set headers; query tokens are rejected elsewhere).
+- **Probes:** `GET /health` and `GET /ready` stay unauthenticated so load
+  balancers and orchestrators can check liveness without exposing run APIs.
+
+**Graph checkpoint durability (known limitation):** BeeAI ACP runs persist in
+SQLite (`SqliteRunStore`, default `~/.altius/runs.db`), but supervisor graph
+checkpoints in `altius fleet serve` are held in a process-lifetime
+`InMemoryCheckpointer` (`serve_command.rs`). HITL `awaiting` → `resume` works
+within a single process; after restart, the BeeAI run row may still show
+`awaiting`, but resume falls back to a full supervisor re-run with the resume
+message appended (no node-level checkpoint restore). Durable checkpoint storage
+exists only via `MemoryStoreCheckpointer` + `Neo4jMemoryStore` (feature
+`neo4j`, external Neo4j); there is no SQLite/file checkpoint adapter today.
+Operators should treat restart during `awaiting` as best-effort recovery, not
+exact graph replay.
 
 The TxGuard audit log is hash-chained and detects modification during explicit
 verification. It is not an append-only remote ledger: a local attacker able to

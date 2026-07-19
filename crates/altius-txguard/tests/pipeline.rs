@@ -4,6 +4,7 @@
 //! evidence for the "no transaction reaches a signer without simulation
 //! and approval" invariant the spec calls out as non-negotiable.
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -194,6 +195,7 @@ fn approved_transaction_is_actually_signed_by_the_isolated_signer() {
         serde_json::to_string(&signing_key.to_keypair_bytes().to_vec()).unwrap(),
     )
     .unwrap();
+    std::fs::set_permissions(&keypair_path, std::fs::Permissions::from_mode(0o600)).unwrap();
 
     let backend = KeypairFileSigner::load(&keypair_path).unwrap();
     let expected_pubkey = backend.pubkey();

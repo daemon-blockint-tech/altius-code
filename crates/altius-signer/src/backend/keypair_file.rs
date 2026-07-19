@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use ed25519_dalek::{Signer as DalekSigner, SigningKey};
+use std::os::unix::fs::PermissionsExt;
 
 use super::Signer;
 use crate::error::SignerError;
@@ -23,6 +24,14 @@ impl KeypairFileSigner {
     /// agent meaningful.
     pub fn load(path: impl AsRef<Path>) -> Result<KeypairFileSigner, SignerError> {
         let path: &Path = path.as_ref();
+        let metadata = std::fs::metadata(path)?;
+        let mode = metadata.permissions().mode() & 0o777;
+        if !metadata.is_file() || mode & 0o077 != 0 {
+            return Err(SignerError::InsecureKeypairFile {
+                path: path.display().to_string(),
+                mode,
+            });
+        }
         let contents = std::fs::read_to_string(path)?;
         Self::parse(&contents, path)
     }
@@ -77,11 +86,16 @@ mod tests {
         serde_json::to_string(&bytes.to_vec()).unwrap()
     }
 
+    fn write_keypair(path: &Path, contents: &str) {
+        std::fs::write(path, contents).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
     #[test]
     fn loads_valid_keypair_file_and_signs() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("id.json");
-        std::fs::write(&path, sample_keypair_json()).unwrap();
+        write_keypair(&path, &sample_keypair_json());
 
         let signer = KeypairFileSigner::load(&path).unwrap();
         let message = b"altius txguard test message";
@@ -96,12 +110,26 @@ mod tests {
     fn rejects_wrong_length_keypair_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("id.json");
-        std::fs::write(&path, "[1, 2, 3]").unwrap();
+        write_keypair(&path, "[1, 2, 3]");
 
         let err = KeypairFileSigner::load(&path).unwrap_err();
         match err {
             SignerError::MalformedKeypairFile { len, .. } => assert_eq!(len, 3),
             other => panic!("expected MalformedKeypairFile, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rejects_group_or_world_accessible_keypair_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("id.json");
+        std::fs::write(&path, sample_keypair_json()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+        let err = KeypairFileSigner::load(&path).unwrap_err();
+        assert!(matches!(
+            err,
+            SignerError::InsecureKeypairFile { mode: 0o640, .. }
+        ));
     }
 }

@@ -360,6 +360,10 @@ mod tests {
         (status, body)
     }
 
+    async fn send_status(app: &Router, request: Request<Body>) -> StatusCode {
+        app.clone().oneshot(request).await.unwrap().status()
+    }
+
     fn post_json(uri: &str, body: Value) -> Request<Body> {
         Request::post(uri)
             .header(header::CONTENT_TYPE, "application/json")
@@ -523,11 +527,11 @@ mod tests {
         let (status, created) = send(&app, request).await;
         assert_eq!(status, StatusCode::ACCEPTED);
 
-        // Query-string token works for header-less clients (EventSource).
+        // Query-string token works for header-less SSE clients (EventSource).
         let id = created["run_id"].as_str().unwrap();
-        let (status, _) = send(
+        let status = send_status(
             &app,
-            Request::get(format!("/runs/{id}?token=s3cret"))
+            Request::get(format!("/runs/{id}/events?token=s3cret"))
                 .body(Body::empty())
                 .unwrap(),
         )

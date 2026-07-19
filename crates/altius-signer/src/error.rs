@@ -8,6 +8,10 @@ pub enum SignerError {
     MalformedKeypairFile { path: String, len: usize },
     #[error("keypair file {path} does not contain a valid Ed25519 keypair: {reason}")]
     InvalidKeypairBytes { path: String, reason: String },
+    #[error(
+        "refusing insecure keypair file {path}: expected a regular file with no group/other permissions (mode {mode:o})"
+    )]
+    InsecureKeypairFile { path: String, mode: u32 },
     #[error("connection closed before a full message was received")]
     ConnectionClosed,
     #[error("message of {0} bytes exceeds the maximum frame size")]

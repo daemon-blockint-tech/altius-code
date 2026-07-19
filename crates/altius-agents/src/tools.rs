@@ -508,6 +508,9 @@ fn scan_output(project: &Path) -> Result<serde_json::Value, String> {
 }
 
 fn bounded_redacted(value: &str) -> String {
+    if altius_core::contains_probable_private_key(value) {
+        return "[REDACTED: probable private-key material withheld]".to_owned();
+    }
     let redacted = altius_core::redact_secrets(value);
     if redacted.len() <= MAX_TOOL_RESULT_BYTES {
         return redacted;

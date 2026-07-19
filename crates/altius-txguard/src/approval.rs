@@ -84,6 +84,8 @@ mod tests {
             owner_changes: vec![],
             compute_units_consumed: 0,
             compute_unit_limit: 200_000,
+            invoked_programs: vec![],
+            action_summary: None,
         }
     }
 

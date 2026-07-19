@@ -1,3 +1,4 @@
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -37,6 +38,7 @@ impl<S: Signer + 'static> SignerServer<S> {
             std::fs::remove_file(&self.socket_path)?;
         }
         let listener = UnixListener::bind(&self.socket_path)?;
+        std::fs::set_permissions(&self.socket_path, std::fs::Permissions::from_mode(0o600))?;
         info!("signer IPC server listening");
         for stream in listener.incoming() {
             let stream = stream?;
@@ -117,6 +119,7 @@ mod tests {
         let signing_key = SigningKey::generate(&mut UnwrapErr(SysRng));
         let bytes = signing_key.to_keypair_bytes().to_vec();
         std::fs::write(path, serde_json::to_string(&bytes).unwrap()).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
 
     #[test]
@@ -135,6 +138,14 @@ mod tests {
         });
         // Give the listener a moment to bind before the client connects.
         wait_for_socket(&socket_path);
+        assert_eq!(
+            std::fs::metadata(&socket_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
 
         let client = SignerClient::new(&socket_path);
         assert_eq!(client.pubkey().unwrap(), expected_pubkey);

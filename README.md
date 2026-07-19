@@ -1,11 +1,9 @@
 # Altius Code
 
-Altius Code is a user-friendly, terminal-based AI coding agent. It runs as a
-full-screen TUI that understands your codebase, edits files, executes shell
-commands, searches the web, and manages long-running tasks — including
-blockchain development and security workflows. Use it interactively,
-headlessly for scripting and CI, or embedded in your editor via the Agent
-Client Protocol (ACP).
+Altius Code is a security-first blockchain development agent and automation
+CLI. The current release provides project detection, multi-chain security
+scanning, guarded Solana deployment, a headless multi-agent fleet, and
+ACP/A2A/MCP protocol services.
 
 ## Overview
 
@@ -23,9 +21,6 @@ audit, and an isolated signer.
 
 ## Features
 
-- **Full-screen TUI** — an interactive terminal interface designed to be
-  approachable: browse the conversation, review proposed changes, and steer
-  the agent without leaving your shell.
 - **Codebase understanding** — the agent explores your project structure,
   reads relevant files, and grounds its answers and edits in your actual
   code rather than guesses.
@@ -73,11 +68,17 @@ The repository is a Cargo workspace of focused crates under
 
 ## Ways to Run
 
-### Interactive (TUI)
+Build the pinned workspace toolchain and CLI from source:
 
-The default mode. Launch Altius Code in a project directory and work with
-the agent conversationally in a full-screen terminal interface — ideal for
-day-to-day development, debugging, and code exploration.
+```sh
+cargo build --locked --release -p altius-cli -p altius-signer
+./target/release/altius --help
+```
+
+### Local CLI
+
+Run `altius detect`, `altius scan`, `altius deploy`, or `altius fleet run`.
+Use `altius <command> --help` for command-specific configuration.
 
 ### Headless
 
@@ -145,6 +146,12 @@ example at
 [`examples/plugins/web3-starter.json`](examples/plugins/web3-starter.json)
 and the loader in
 [`crates/altius-cli/src/plugin.rs`](crates/altius-cli/src/plugin.rs).
+
+**Remote deployment:** binding to a non-loopback address requires
+`--token` or `ALTIUS_FLEET_TOKEN` (loopback-only demos may omit it). Clients
+use `Authorization: Bearer <token>`; append `?token=` only on
+`/runs/{id}/events` for SSE. See
+[`docs/SECURITY_THREAT_MODEL.md`](docs/SECURITY_THREAT_MODEL.md#remote-fleet-altius-fleet-serve).
 
 ## Protocol Naming: Two Different "ACP"s
 
@@ -218,8 +225,12 @@ private until reviewed.
 
 ## Status
 
-Altius Code is under active development. Installation instructions, full
-documentation, and source code are coming soon.
+Altius Code is under active development. Public HTTP fleet services default to
+loopback; a non-loopback bind requires `--token` or `ALTIUS_FLEET_TOKEN`.
+Production signer deployments must use an owner-only (`0600`) keypair file and
+should run `altius-signerd` under a dedicated OS identity. See the
+[security threat model](docs/SECURITY_THREAT_MODEL.md) for deployment
+assumptions and remaining limitations.
 
 ## License
 

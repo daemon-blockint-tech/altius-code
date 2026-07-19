@@ -47,11 +47,15 @@ impl BearerAuth {
                 }
             }
         }
-        // Query-string fallback for EventSource, which cannot set headers.
-        if let Some(query) = request.uri().query() {
-            for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
-                if key == "token" && constant_time_eq(&value, expected) {
-                    return true;
+        // Query-string fallback is restricted to the SSE endpoint because
+        // EventSource cannot set headers. Accepting credentials in URLs on
+        // ordinary endpoints needlessly exposes them to logs and history.
+        if request.uri().path().ends_with("/events") {
+            if let Some(query) = request.uri().query() {
+                for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+                    if key == "token" && constant_time_eq(&value, expected) {
+                        return true;
+                    }
                 }
             }
         }
@@ -78,7 +82,8 @@ pub async fn require_bearer(
         return next.run(request).await;
     }
     ProtocolError::Unauthorized(
-        "missing or invalid bearer token (use `Authorization: Bearer <token>` or `?token=`)"
+        "missing or invalid bearer token (use `Authorization: Bearer <token>`; \
+         `?token=` is accepted only on `/runs/{id}/events` for SSE)"
             .to_owned(),
     )
     .into_response()
@@ -111,7 +116,8 @@ mod tests {
         assert!(!auth.authorizes(&request("/runs", None)));
         assert!(!auth.authorizes(&request("/runs", Some("Bearer wrong"))));
         assert!(auth.authorizes(&request("/runs", Some("Bearer s3cret"))));
-        assert!(auth.authorizes(&request("/runs?token=s3cret", None)));
-        assert!(!auth.authorizes(&request("/runs?token=wrong", None)));
+        assert!(!auth.authorizes(&request("/runs?token=s3cret", None)));
+        assert!(auth.authorizes(&request("/runs/id/events?token=s3cret", None)));
+        assert!(!auth.authorizes(&request("/runs/id/events?token=wrong", None)));
     }
 }

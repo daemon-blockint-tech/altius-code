@@ -7,11 +7,16 @@
   const params = new URLSearchParams(location.search);
   const apiBase = (params.get("api") || location.origin).replace(/\/$/, "");
 
-  // Bearer token: ?token= wins, then localStorage (P0 remote).
+  // Bearer token: ?token= wins, then sessionStorage. Remove credentials
+  // from the visible URL immediately so they do not remain in browser
+  // history or leak via copied links.
   if (params.get("token")) {
-    localStorage.setItem(TOKEN_KEY, params.get("token"));
+    sessionStorage.setItem(TOKEN_KEY, params.get("token"));
+    const cleanUrl = new URL(location.href);
+    cleanUrl.searchParams.delete("token");
+    history.replaceState(null, "", cleanUrl);
   }
-  let authToken = localStorage.getItem(TOKEN_KEY) || "";
+  let authToken = sessionStorage.getItem(TOKEN_KEY) || "";
 
   const els = {
     prompt: document.getElementById("prompt"),

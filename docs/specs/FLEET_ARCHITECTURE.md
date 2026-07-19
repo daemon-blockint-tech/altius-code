@@ -168,7 +168,10 @@ and awaiting-approval resume.
   (`Checkpointer`), through the `MemoryStore` trait (in-memory default;
   `Neo4jMemoryStore` behind feature `neo4j` persists
   `(:Run)-[:HAS_CHECKPOINT]->(:Checkpoint)` and `(:KvEntry)` scratch
-  values with base64 payloads).
+  values with base64 payloads). **`altius fleet serve` today uses
+  `InMemoryCheckpointer` only** — checkpoints survive HITL resume within one
+  process but not across restarts; see
+  [`SECURITY_THREAT_MODEL.md`](../SECURITY_THREAT_MODEL.md) (Remote fleet).
 - **Cross-session knowledge:** `altius-memory` persists `Run`, `Step`,
   `Artifact`, `Contract`, `Vulnerability`, `Skill` nodes with `EXECUTED`,
   `HAS_STEP`, `PRODUCED`, `CALLED`, `DEPLOYED`, `PAID`,
@@ -223,6 +226,9 @@ simulation-to-sign drift, blockhash-expiry, and replay limitations.
   enabled (no third-party leaked prompts, ever).
 - Optional Neo4j-backed `RunStore` (SQLite is the durable default today);
   push notifications beyond SSE.
+- **Durable graph checkpoints for fleet serve:** wire `MemoryStoreCheckpointer`
+  (Neo4j today, or a future SQLite/file `MemoryStore`) so HITL resume survives
+  process restart; restore BeeAI-run → graph-run id mapping on startup.
 
 ### Done in this layer (no longer stubs)
 
@@ -239,8 +245,8 @@ simulation-to-sign drift, blockhash-expiry, and replay limitations.
 - Harness Phase A: sandboxed FS/`run_command` tools, Pre/PostToolUse hooks,
   FailClosed `[tools]` permissions, `.altius.md` project memory.
 - Remote fleet (P0): SQLite `RunStore`, bearer/`?token=` auth, async
-  `POST /runs` + `GET /runs/{id}/events` SSE, checkpoint-backed
-  awaiting→resume HITL.
+  `POST /runs` + `GET /runs/{id}/events` SSE, in-process checkpoint
+  awaiting→resume HITL (full re-run fallback after restart).
 - Slash skills v0: `/scan`, `/audit`, `/browser`, `/pay` force routes in
   CLI, BeeACP, and PWA.
 - Plugin pack v0: JSON manifest (`examples/plugins/web3-starter.json`)

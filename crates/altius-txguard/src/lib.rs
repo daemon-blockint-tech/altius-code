@@ -11,6 +11,7 @@ mod approval;
 mod audit_log;
 mod diff;
 mod error;
+mod known_programs;
 mod pipeline;
 mod policy;
 mod rpc_simulator;

@@ -4,6 +4,7 @@
 
 mod error;
 mod fs_tools;
+mod guardrails;
 mod hooks;
 mod llm;
 mod permissions;
@@ -15,6 +16,10 @@ mod supervisor;
 mod tools;
 
 pub use error::{AgentError, AgentResult};
+pub use guardrails::{
+    default_guardrail_hooks, GuardrailPolicy, GuardrailsPipeline, IndirectInjectionHook,
+    RailDecision, DEFAULT_MAX_OUTPUT_CHARS,
+};
 pub use hooks::{HookEvent, HookOutcome, HookedDispatcher, ToolHook};
 pub use llm::{
     ChatMessage, LlmClient, OfflineLlmClient, OpenAiCompatibleClient, Role, ToolCall, ToolSpec,

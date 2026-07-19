@@ -111,3 +111,57 @@ mentah untuk benchmark publik yang direncanakan.
 | 2 | Perkaya `DiffReport` dengan pengenal program ID terkenal | Perbaikan kecil, dampak langsung ke kepercayaan pengguna (Langkah 2) |
 | 3 | Rancang `TxKind::Payment` + adapter x402/MPP | Perluasan moat nyata, belum ada di kompetitor manapun |
 | 4 | Jelajahi pola planning/subagent ala `deepagentsjs` untuk runtime agent Altius sendiri | Menopang Langkah 4, sekaligus mengisi kekosongan ekosistem Rust |
+
+## 4. Competitive landscape refresh (19 Jul 2026)
+
+Sumber primer / produk publik (bukan spekulasi pemasaran). Fokus: mekanika Claude Code
+yang Altius adaptasi, scanner keamanan, simulasi transaksi, dan agent web3 vertikal.
+
+### 4.1 Matriks kompetitor / adjacent
+
+| Produk | Kategori | Overlap vs Altius | Diferensiasi Altius |
+|---|---|---|---|
+| [Claude Code Remote Control](https://code.claude.com/docs/en/remote-control) | Remote coding agent (research preview) | Thin client → host session; permission gates tetap; MCP/skills lokal | Altius: self-hosted BeeACP/PWA + bearer token + SQLite RunStore; **bukan** subscription OAuth Anthropic; domain web3 |
+| [Cyfrin Aderyn](https://github.com/cyfrin/aderyn) | Static analyzer Solidity (Rust), SARIF/MD/JSON, CI Action | `altius scan --format sarif` di CI | Aderyn = detector EVM dalam; Altius = multi-chain fleet + agent route `/scan` + TxGuard path |
+| Trail of Bits Slither / Mythril | Static / symbolic EVM | Pattern scanners, CI gate | Altius mengorkestrasi native scanners + agent, bukan mengganti Slither |
+| [Tenderly Simulations](https://docs.tenderly.co/simulations/overview) | Dev-grade tx simulation API (100+ EVM nets) | Preview outcome sebelum broadcast | Altius TxGuard: sim → HITL → isolated signer; Solana-first + policy fail-closed |
+| Blowfish (wallet simulation / fraud) | End-user / wallet risk engine (Solana+EVM) | Human-readable pre-sign preview | Altius target **developer agent** workflow, bukan wallet extension |
+| Pocket Universe | Browser extension + insurance tier | Pre-sign phishing catch | Adjacent UX; bukan coding fleet |
+| [SmartContract-VulnHunter](https://github.com/MaridWSH/SmartContract-VulnHunter) | Multi-scanner CLI + LLM triage + SARIF | Orchestrates Slither/Aderyn/Trident/sec3 | Altius: Rust fleet + BeeACP remote + TxGuard; VulnHunter = scanner orchestra |
+| Lamport / forge-solana-sdk / Luna Agent | Solana codegen / desktop audit agents | Anchor generate/build/audit loops | Altius: production guardrails + remote PWA + plugin packs; jangan race codegen UX saja |
+| Solana Agent Kit / GOAT / Rig | On-chain action toolkits | Agent tools for transfer/swap/DeFi | Toolkit ≠ full fleet; Altius harus **membungkus** aksi lewat TxGuard, bukan expose raw tools |
+
+### 4.2 Temuan Claude Remote Control (primer)
+
+Dari docs resmi Anthropic (research preview, diperbarui 2026):
+
+- Session tetap **lokal**; browser/phone hanya viewport (filesystem/MCP/config di mesin host).
+- Auth: **claude.ai OAuth saja** — API keys tidak didukung; Team/Enterprise off-by-default sampai Owner enable.
+- Permission gates tetap aktif saat remote; sandbox opsional; session URL harus diperlakukan sebagai secret.
+- Fitur mature: reconnect, multi-device sync, worktree spawn, capacity limits.
+
+**Implikasi produksi Altius:** P0 remote (token + SSE + durable store + awaiting HITL) sudah arah yang benar. Gap vs Claude: Trusted Devices / org admin toggle, outbound-only relay (bukan open bind tanpa auth), QR/session naming, reconnect resilience. **Jangan** meniru lock-in OAuth lab; pertahankan self-hosted + model-agnostic (Langkah 6).
+
+### 4.3 Implikasi production-readiness
+
+| Prioritas | Aksi | Alasan kompetitif |
+|---|---|---|
+| P0 | Bearer wajib di non-localhost; dokumentasikan no-auth hanya offline demo | Claude memperlakukan remote URL sebagai credential; Altius harus setara |
+| P0 | Human-readable `DiffReport` (program ID dikenal) sebelum approve | Tenderly/Blowfish menang di preview readability (Langkah 2) |
+| P1 | SARIF CI fail-on High/Critical + artifact upload (sudah ada job `scan`) | Paritas Aderyn CI / VulnHunter SARIF |
+| P1 | Vertikal Solana detectors + optional shell-out ke Aderyn/Slither | Cross-chain static analysis masih gap pasar 2026 |
+| P2 | `TxKind::Payment` / x402 lewat TxGuard | Differentiator vs Agent Kit/GOAT yang expose transfer mentah |
+| P2 | Plugin pack marketplace web3 (bukan general) | Langkah 5; v0 install-by-path cukup sampai retention ada |
+| Hindari | Race channel messaging / desktop IDE / frontier model lock-in | Sudah di §5 strategi utama; Claude/OpenClaw menang di sana |
+
+### 4.4 Sumber
+
+- https://code.claude.com/docs/en/remote-control
+- https://github.com/cyfrin/aderyn (v0.6.8+, SARIF, GitHub Action, ~784★ / 19 Jul 2026)
+- https://docs.tenderly.co/simulations/overview
+- https://docs.tenderly.co/api-reference/simulations/simulate-transaction
+- https://github.com/brave/brave-browser/wiki/Transaction-Simulation (Blowfish as Brave Wallet backend)
+- https://github.com/MaridWSH/SmartContract-VulnHunter
+- https://www.alchemy.com/blog/how-to-build-solana-ai-agents-in-2026
+- https://github.com/manavnotop/lamport
+- https://github.com/Prestes16/luna-agent

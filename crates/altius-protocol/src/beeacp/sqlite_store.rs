@@ -43,6 +43,18 @@ impl SqliteRunStore {
         let conn = Connection::open(path).map_err(|e| {
             ProtocolError::Internal(format!("open run db `{}`: {e}", path.display()))
         })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(
+                |e| {
+                    ProtocolError::Internal(format!(
+                        "secure run db permissions `{}`: {e}",
+                        path.display()
+                    ))
+                },
+            )?;
+        }
         Self::from_connection(conn)
     }
 
@@ -376,5 +388,20 @@ mod tests {
         let store = SqliteRunStore::open(&path).unwrap();
         let fetched = store.get(id).await.unwrap();
         assert_eq!(fetched.status, RunStatus::InProgress);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_database_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("runs.db");
+        SqliteRunStore::open(&path).unwrap();
+
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

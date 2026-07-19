@@ -127,9 +127,9 @@ pub struct FleetServeArgs {
     #[arg(long)]
     pub browser_mcp_args: Option<String>,
 
-    /// Bearer token required on the BeeAI ACP surface. Clients send
-    /// `Authorization: Bearer <token>` or `?token=` (EventSource). Unset or
-    /// empty leaves the surface open for offline demos.
+    /// Bearer token required on every HTTP surface. Clients send
+    /// `Authorization: Bearer <token>` or `?token=` (EventSource). A token is
+    /// mandatory when binding to a non-loopback address.
     #[arg(long, env = "ALTIUS_FLEET_TOKEN")]
     pub token: Option<String>,
 
