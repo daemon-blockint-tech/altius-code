@@ -171,11 +171,7 @@ pub struct GitHubMcpArgs {
 
     /// Name of the environment variable containing the GitHub bearer token.
     /// The token value is never accepted as a CLI argument or sent to the LLM.
-    #[arg(
-        long,
-        env = "ALTIUS_GITHUB_TOKEN_ENV",
-        default_value = "GITHUB_TOKEN"
-    )]
+    #[arg(long, env = "ALTIUS_GITHUB_TOKEN_ENV", default_value = "GITHUB_TOKEN")]
     pub github_token_env: String,
 
     /// GitHub MCP capability exposed to the specialist.

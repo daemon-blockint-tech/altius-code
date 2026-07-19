@@ -225,9 +225,7 @@ pub async fn attach_mcp(config: McpAttachConfig) -> Result<AttachedMcp, McpClien
 }
 
 /// Attach directly to a remote streamable-HTTP MCP endpoint.
-pub async fn attach_remote_mcp(
-    config: McpRemoteConfig,
-) -> Result<AttachedMcp, McpClientError> {
+pub async fn attach_remote_mcp(config: McpRemoteConfig) -> Result<AttachedMcp, McpClientError> {
     validate_remote_config(&config)?;
     spawn_remote(config).await
 }
@@ -398,11 +396,7 @@ fn validate_config(config: &McpAttachConfig) -> Result<(), McpClientError> {
             "too many env_extras entries".into(),
         ));
     }
-    if config
-        .env_extras
-        .iter()
-        .any(|key| !valid_env_key(key))
-    {
+    if config.env_extras.iter().any(|key| !valid_env_key(key)) {
         return Err(McpClientError::InvalidConfig(
             "env_extras keys must be ASCII environment names and bounded".into(),
         ));
