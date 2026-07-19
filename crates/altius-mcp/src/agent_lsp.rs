@@ -87,9 +87,9 @@ fn map_error(error: McpClientError) -> AgentLspError {
         McpClientError::Request(_, message) => AgentLspError::Request(message),
         McpClientError::NotFound(name) => AgentLspError::Request(format!("not found: {name}")),
         McpClientError::Shutdown(_, message) => AgentLspError::Shutdown(message),
-        McpClientError::MissingCredential(env_var) => {
-            AgentLspError::InvalidConfig(format!("missing credential environment variable `{env_var}`"))
-        }
+        McpClientError::MissingCredential(env_var) => AgentLspError::InvalidConfig(format!(
+            "missing credential environment variable `{env_var}`"
+        )),
     }
 }
 
