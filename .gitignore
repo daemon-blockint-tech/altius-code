@@ -5,3 +5,9 @@
 .altius/
 *.pem
 *.key
+
+# ide/ (Altius IDE fork scaffold): upstream checkout + JS build output, never checked in
+/ide/vscode/
+**/node_modules/
+/ide/extensions/*/out/
+*.vsix

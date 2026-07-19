@@ -1,0 +1,128 @@
+{
+  "name": "altius-agent",
+  "displayName": "Altius Agent",
+  "description": "Agentic Solana development: fleet dispatch, guarded security scanning, and TxGuard-guided deploys, inside the editor.",
+  "version": "0.1.0",
+  "publisher": "altius",
+  "private": true,
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other", "Linters"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "altius",
+          "title": "Altius",
+          "icon": "media/altius.svg"
+        }
+      ]
+    },
+    "views": {
+      "altius": [
+        {
+          "type": "webview",
+          "id": "altius.dispatchView",
+          "name": "Fleet Dispatch"
+        },
+        {
+          "id": "altius.findingsView",
+          "name": "Security Findings"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "altius.runScan",
+        "title": "Altius: Scan Project for Security Findings",
+        "icon": "$(search)"
+      },
+      {
+        "command": "altius.clearFindings",
+        "title": "Altius: Clear Security Findings",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "altius.deployDryRun",
+        "title": "Altius: Guarded Deploy (Dry Run)",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "altius.deployLive",
+        "title": "Altius: Guarded Deploy (Sign & Submit)"
+      },
+      {
+        "command": "altius.setFleetToken",
+        "title": "Altius: Set Fleet Bearer Token"
+      },
+      {
+        "command": "altius.focusDispatch",
+        "title": "Altius: Focus Fleet Dispatch"
+      },
+      {
+        "command": "altius.revealFinding",
+        "title": "Altius: Reveal Finding in Editor"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "altius.runScan",
+          "when": "view == altius.findingsView",
+          "group": "navigation"
+        },
+        {
+          "command": "altius.clearFindings",
+          "when": "view == altius.findingsView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Altius",
+      "properties": {
+        "altius.cliPath": {
+          "type": "string",
+          "default": "altius",
+          "description": "Path to the `altius` binary used for scan/deploy commands. Defaults to resolving `altius` from PATH."
+        },
+        "altius.scanPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to scan, relative to the workspace root. Empty scans the whole workspace root."
+        },
+        "altius.scanChain": {
+          "type": "string",
+          "default": "auto",
+          "description": "Chain family passed to `altius scan --chain` (e.g. auto, svm, evm)."
+        },
+        "altius.fleetUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8788",
+          "description": "Base URL of a running `altius fleet serve` instance (BeeAI ACP run lifecycle)."
+        },
+        "altius.deployProjectPath": {
+          "type": "string",
+          "default": "",
+          "description": "Project path passed to `altius deploy --project`, relative to the workspace root. Empty uses the workspace root."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "lint": "tsc --noEmit -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
