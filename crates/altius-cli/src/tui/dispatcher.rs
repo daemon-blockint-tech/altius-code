@@ -1,3 +1,5 @@
+use clap::Parser;
+
 use super::app::App;
 
 /// Dispatch a TUI command string to the appropriate CLI handler.
@@ -75,12 +77,12 @@ fn run_command(input: &str) -> Result<String, String> {
                 .map_err(|e| e.to_string())
         }
         crate::cli::Command::Scan(args) => {
-            crate::scan_command::run_scan(args)
+            crate::scan_command::run_scan(&args)
                 .map(|_| "scan: completed (output printed to terminal)".to_string())
                 .map_err(|e| e.to_string())
         }
         crate::cli::Command::Eval(args) => {
-            crate::eval_command::run_eval(args)
+            crate::eval_command::run_eval(&args)
                 .map(|_| "eval: completed (output printed to terminal)".to_string())
                 .map_err(|e| e.to_string())
         }
