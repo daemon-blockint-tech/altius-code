@@ -16,18 +16,25 @@ export interface Message {
   parts: MessagePart[]
 }
 
+export interface LamportDelta {
+  account: string
+  delta_lamports: string
+}
+
+export interface TransactionPreview {
+  action_summary?: string
+  lamport_deltas?: LamportDelta[]
+  invoked_programs?: string[]
+  compute_units_consumed?: number
+  compute_unit_limit?: number
+}
+
 export interface RunApproval {
   summary: string
   reason?: string
   node?: string
   kind: 'generic' | 'transaction'
-  transaction?: {
-    action_summary?: string
-    lamport_deltas?: { account: string; delta_lamports: string }[]
-    invoked_programs?: string[]
-    compute_units_consumed?: number
-    compute_unit_limit?: number
-  }
+  transaction?: TransactionPreview
 }
 
 export interface Run {
@@ -53,7 +60,23 @@ export interface ResumeRunRequest {
 }
 
 export interface SseEvent {
-  type: 'run' | 'message'
-  run?: Run
-  message?: Message
+  type: 'run'
+  run: Run
+}
+
+export interface AgentSkill {
+  id: string
+  name: string
+  description: string
+  tags: string[]
+  examples: string[]
+}
+
+export interface AgentCard {
+  protocol_version: string
+  name: string
+  description: string
+  url: string
+  version: string
+  skills: AgentSkill[]
 }

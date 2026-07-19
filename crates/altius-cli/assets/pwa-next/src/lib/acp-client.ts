@@ -3,10 +3,11 @@ import {
   type CreateRunRequest,
   type ResumeRunRequest,
   type SseEvent,
+  type AgentCard,
   type Message as AcpMessage,
 } from './types'
 
-export { Run, CreateRunRequest, ResumeRunRequest, SseEvent }
+export { Run, CreateRunRequest, ResumeRunRequest, SseEvent, AgentCard }
 export { AcpMessage as Message }
 
 function headers(token: string): HeadersInit {
@@ -66,6 +67,14 @@ export class AcpClient {
     return res.json()
   }
 
+  async getAgentCard(): Promise<AgentCard> {
+    const res = await fetch(`${this.baseUrl}/.well-known/agent-card.json`, {
+      headers: headers(this.token),
+    })
+    if (!res.ok) throw new Error(`getAgentCard: ${res.status}`)
+    return res.json()
+  }
+
   async *streamEvents(runId: string): AsyncGenerator<SseEvent> {
     const url = new URL(`${this.baseUrl}/runs/${runId}/events`)
     if (this.token) url.searchParams.set('token', this.token)
@@ -95,13 +104,13 @@ export class AcpClient {
         } else if (line.startsWith('data: ')) {
           currentData = line.slice(6)
         } else if (line === '' && currentData) {
-          try {
-            const json = JSON.parse(currentData)
-            if (currentEvent === 'run' || currentEvent === 'message') {
-              yield { type: currentEvent as 'run' | 'message', run: json.run, message: json }
+          if (currentEvent === 'run') {
+            try {
+              const run = JSON.parse(currentData) as Run
+              yield { type: 'run', run }
+            } catch {
+              // skip malformed
             }
-          } catch {
-            // skip malformed
           }
           currentEvent = ''
           currentData = ''

@@ -5,9 +5,10 @@ import { cn } from '@/lib/utils'
 interface StatusBarProps {
   health: 'ok' | 'down' | 'checking'
   apiBase: string
+  agentCount?: number
 }
 
-export function StatusBar({ health, apiBase }: StatusBarProps) {
+export function StatusBar({ health, apiBase, agentCount }: StatusBarProps) {
   const dotColor = {
     ok: 'bg-ok',
     down: 'bg-bad',
@@ -30,6 +31,12 @@ export function StatusBar({ health, apiBase }: StatusBarProps) {
         <>
           <span className="text-text-tertiary">|</span>
           <span className="font-mono">{apiBase}</span>
+        </>
+      )}
+      {agentCount != null && agentCount > 0 && (
+        <>
+          <span className="text-text-tertiary">|</span>
+          <span>{agentCount} agent{agentCount !== 1 ? 's' : ''}</span>
         </>
       )}
       <span className="ml-auto text-text-tertiary">Altius Fleet</span>
