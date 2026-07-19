@@ -37,6 +37,8 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 solana-pubkey = "4.2.0"
 solana-rpc-client = "4.1.2"
+ratatui = "0.29"
+crossterm = "0.28"
 
 [dev-dependencies]
 tempfile = { workspace = true }
