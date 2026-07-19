@@ -135,7 +135,7 @@ WASM CDT tooling would live as an optional specialist on `altius-wasm-agents`.
 | `altius-core` | shared | IDs (`RunId`, `StepId`, …), budgets, redaction |
 | `altius-graph` | fleet core | Tokio graph runtime: nodes, edges, checkpoints, fan-out/fan-in, HITL interrupts; `MemoryStore` trait |
 | `altius-agents` | fleet core | Role prompt/policy packs + supervisor graph (router → explorer/coder → critic → finalize) |
-| `altius-mcp` | tool plane | MCP server wrapping detect/build/test/lint; optional MCP client multi-attach (`mcp-client`) for browser / agent-lsp |
+| `altius-mcp` | tool plane | MCP server wrapping detect/build/test/lint; optional MCP client multi-attach (`mcp-client`) over stdio or authenticated streamable HTTP (browser / GitHub / agent-lsp) |
 | `altius-protocol` | ingress | Editor ACP codec, BeeAI ACP runs, A2A card/tasks, ANP stubs, shared input limits |
 | `altius-payments` | tool plane | x402 402-challenge parsing → `TxKind::Payment` `TxRequest` → settlement **only** via `TxGuard::submit` → `X-PAYMENT` proof header |
 | `altius-memory` | state | Neo4j knowledge graph (feature `neo4j`) + in-memory fallback; redacted JSONL trajectory logging |
@@ -156,13 +156,15 @@ Dependency direction stays acyclic:
 | `explorer` | Codebase search / intelligence | read-only (`detect_project`, `lint_project`, `read_file`, `grep`, `glob`) |
 | `coder` | Edits, builds, tests | `write_file` / `edit_file` / allowlisted `run_command`; no signing |
 | `browser` | Web automation via attached browser MCP | read/interact only; `browser_*` tool allowlist; no TxGuard path |
+| `github` | Repository, issue, checks, and pull-request operations via GitHub MCP | read-only by default; explicit branch/file/PR allowlist in `pull-requests` mode; merge/delete/admin/workflow dispatch denied |
 | `security` | Lint/audit review | read-only (detect/lint + FS read tools) |
 | `deployer` | Produces `TxRequest`s only | must call TxGuard |
 | `payment` | x402 paid API calls | must call TxGuard (`TxKind::Payment`) |
 | `knowledge` | Neo4j + ontology queries | schema-gated graph writes |
 | `critic` | Trajectory QA before finalize | none |
 
-Router, explorer, coder, browser, security, and critic are live graph nodes.
+Router, explorer, coder, browser, GitHub, security, and critic are live graph
+nodes.
 Explorer/coder/security run a bounded `tool_loop` (up to 12 rounds) through
 `HookedDispatcher` → `PermissionedDispatcher` → `LocalTools`. Project
 instructions load from `.altius.md` or `ALTIUS.md` at the project root
@@ -189,6 +191,17 @@ Browser MCP attach is opt-in at `altius fleet serve` via
 `--browser-mcp-args` or `ALTIUS_BROWSER_MCP_ARGS` as a JSON array). A
 zero-build PWA thin client is served at `/app/` for dispatch, run list,
 and awaiting-approval resume.
+
+GitHub MCP attach is opt-in for `fleet run` and `fleet serve` via
+`--github-mcp-url` / `ALTIUS_GITHUB_MCP_URL`. Authentication is read from
+the environment variable named by `--github-token-env` (default
+`GITHUB_TOKEN`); the token value is never accepted on the command line,
+serialized, logged, persisted, or placed in model context. The default
+`--github-access read-only` exposes only inspection tools. Explicit
+`--github-access pull-requests` additionally permits a bounded set of
+branch/file-write and pull-request create/update tools while continuing to
+deny merge, delete, release, workflow-dispatch, and repository-admin tools.
+Route with `agent_name=github`, `/github`, or `@GitHub`.
 
 ## 5. Payments (x402) flow
 

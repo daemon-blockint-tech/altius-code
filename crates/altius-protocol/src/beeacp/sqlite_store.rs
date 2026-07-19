@@ -162,12 +162,13 @@ fn decode_run(
         finished_at,
     ): StoredRunRow,
 ) -> Result<Run> {
-    let approval = match approval_json {
-        Some(raw) => Some(serde_json::from_str(&raw).map_err(|e| {
-            ProtocolError::Internal(format!("corrupt approval json in db: {e}"))
-        })?),
-        None => None,
-    };
+    let approval =
+        match approval_json {
+            Some(raw) => Some(serde_json::from_str(&raw).map_err(|e| {
+                ProtocolError::Internal(format!("corrupt approval json in db: {e}"))
+            })?),
+            None => None,
+        };
     Ok(Run {
         run_id: run_id
             .parse()

@@ -13,8 +13,8 @@
 
 mod auth;
 mod model;
-mod routes;
 mod openapi;
+mod routes;
 mod sqlite_store;
 mod store;
 

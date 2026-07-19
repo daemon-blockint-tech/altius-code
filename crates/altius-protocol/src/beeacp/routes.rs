@@ -28,9 +28,7 @@ pub enum RunOutcome {
     /// The run finished with the given output messages.
     Completed(Vec<Message>),
     /// The run is paused waiting for external input (`POST /runs/{id}`).
-    Awaiting {
-        approval: RunApproval,
-    },
+    Awaiting { approval: RunApproval },
     /// The run failed with a human-readable reason.
     Failed(String),
 }
@@ -156,13 +154,7 @@ async fn apply_outcome(state: &BeeAcpState, run_id: RunId, outcome: RunOutcome) 
         RunOutcome::Awaiting { approval } => {
             state
                 .store
-                .transition(
-                    run_id,
-                    RunStatus::Awaiting,
-                    None,
-                    None,
-                    Some(approval),
-                )
+                .transition(run_id, RunStatus::Awaiting, None, None, Some(approval))
                 .await
         }
         RunOutcome::Failed(reason) => {
@@ -257,7 +249,10 @@ pub(crate) async fn list_runs(State(state): State<BeeAcpState>) -> Result<Json<V
     ),
     security(("bearer_auth" = []))
 )]
-pub(crate) async fn get_run(State(state): State<BeeAcpState>, Path(id): Path<String>) -> Result<Json<Run>> {
+pub(crate) async fn get_run(
+    State(state): State<BeeAcpState>,
+    Path(id): Path<String>,
+) -> Result<Json<Run>> {
     let run = state.store.get(parse_run_id(&id)?).await?;
     Ok(Json(run))
 }
@@ -274,7 +269,10 @@ pub(crate) async fn get_run(State(state): State<BeeAcpState>, Path(id): Path<Str
     ),
     security(("bearer_auth" = []))
 )]
-pub(crate) async fn cancel_run(State(state): State<BeeAcpState>, Path(id): Path<String>) -> Result<Json<Run>> {
+pub(crate) async fn cancel_run(
+    State(state): State<BeeAcpState>,
+    Path(id): Path<String>,
+) -> Result<Json<Run>> {
     let run = state
         .store
         .transition(parse_run_id(&id)?, RunStatus::Cancelled, None, None, None)
@@ -663,7 +661,9 @@ mod tests {
         // so keep-alive pings keep the stream open indefinitely.
         let (_, run) = send(
             &app,
-            Request::get(format!("/runs/{id}")).body(Body::empty()).unwrap(),
+            Request::get(format!("/runs/{id}"))
+                .body(Body::empty())
+                .unwrap(),
         )
         .await;
         assert_eq!(run["status"], "awaiting");

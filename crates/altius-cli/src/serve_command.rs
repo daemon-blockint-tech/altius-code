@@ -22,8 +22,8 @@ use altius_protocol::anp::{
     AgentDescription, AgentRegistry, AnpState, InMemoryRegistry, InterfaceDescription,
 };
 use altius_protocol::beeacp::{
-    require_bearer, BearerAuth, BeeAcpState, Message, MessagePart, Run, RunApproval, RunExecutor,
-    RunOutcome, SqliteRunStore, openapi_router,
+    openapi_router, require_bearer, BearerAuth, BeeAcpState, Message, MessagePart, Run,
+    RunApproval, RunExecutor, RunOutcome, SqliteRunStore,
 };
 use altius_protocol::Result as ProtocolResult;
 use async_trait::async_trait;
@@ -294,9 +294,11 @@ impl FleetRunExecutor {
             .await
         {
             Ok(ExecutionOutcome::Finished { state, .. }) => Ok(Some(completed_outcome(state))),
-            Ok(ExecutionOutcome::Interrupted { reason, node, .. }) => Ok(Some(RunOutcome::Awaiting {
-                approval: RunApproval::generic(reason, Some(node)),
-            })),
+            Ok(ExecutionOutcome::Interrupted { reason, node, .. }) => {
+                Ok(Some(RunOutcome::Awaiting {
+                    approval: RunApproval::generic(reason, Some(node)),
+                }))
+            }
             Err(error) => Ok(Some(RunOutcome::Failed(error.to_string()))),
         }
     }
@@ -384,6 +386,7 @@ fn options_for_run(template: &SupervisorOptions, agent_name: &str) -> Supervisor
     SupervisorOptions {
         agent_name: Some(agent_name.to_owned()),
         browser: template.browser.clone(),
+        github: template.github.clone(),
         hooks: template.hooks.clone(),
     }
 }
@@ -415,7 +418,11 @@ fn llm_client(offline: bool) -> ProtocolResult<Arc<dyn LlmClient>> {
     Ok(Arc::new(OfflineLlmClient))
 }
 
-fn agent_card(public_url: &str, browser_enabled: bool) -> Result<AgentCard, CliError> {
+fn agent_card(
+    public_url: &str,
+    browser_enabled: bool,
+    github_enabled: bool,
+) -> Result<AgentCard, CliError> {
     let mut skills = vec![
         AgentSkill {
             id: "fleet-supervisor".into(),
@@ -446,6 +453,20 @@ fn agent_card(public_url: &str, browser_enabled: bool) -> Result<AgentCard, CliE
                     .into(),
             tags: vec!["browser".into(), "mcp".into()],
             examples: vec!["@Browser open https://example.com and summarize the title".into()],
+        });
+    }
+    if github_enabled {
+        skills.push(AgentSkill {
+            id: "github".into(),
+            name: "GitHub".into(),
+            description:
+                "GitHub repository and pull-request operations via an attached GitHub MCP server (agent_name=github / @GitHub)"
+                    .into(),
+            tags: vec!["github".into(), "mcp".into(), "pull-request".into()],
+            examples: vec![
+                "@GitHub inspect the open pull requests".into(),
+                "/github create a pull request for these changes".into(),
+            ],
         });
     }
     let card = AgentCard {
@@ -503,7 +524,7 @@ fn browser_mcp_config(args: &FleetServeArgs) -> Result<Option<McpAttachConfig>, 
 
 async fn build_supervisor_options(
     args: &FleetServeArgs,
-) -> Result<(SupervisorOptions, bool, Option<String>), CliError> {
+) -> Result<(SupervisorOptions, bool, bool, Option<String>), CliError> {
     let attachments = Arc::new(McpAttachments::new());
     let mut browser_tooling = None;
     let mut plugin_name = None;
@@ -554,13 +575,18 @@ async fn build_supervisor_options(
         }
     }
     let browser_enabled = browser_tooling.is_some();
+    let github_tooling =
+        crate::github_connector::attach(&args.github, attachments.as_ref()).await?;
+    let github_enabled = github_tooling.is_some();
     Ok((
         SupervisorOptions {
             agent_name: None,
             browser: browser_tooling,
+            github: github_tooling,
             hooks: Vec::new(),
         },
         browser_enabled,
+        github_enabled,
         plugin_name,
     ))
 }
@@ -609,18 +635,19 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
         offline: args.offline,
         browser_mcp_cmd: args.browser_mcp_cmd.clone(),
         browser_mcp_args: args.browser_mcp_args.clone(),
+        github: args.github.clone(),
         token: args.token.clone(),
         run_db: args.run_db.clone(),
         plugin: args.plugin.clone(),
     };
 
     rt.block_on(async move {
-        let (options_template, browser_enabled, plugin_name) =
+        let (options_template, browser_enabled, github_enabled, plugin_name) =
             build_supervisor_options(&serve_args).await?;
         if let Some(name) = &plugin_name {
             eprintln!("altius: plugin pack loaded: {name}");
         }
-        let card = agent_card(&public_url, browser_enabled)?;
+        let card = agent_card(&public_url, browser_enabled, github_enabled)?;
         let a2a = altius_protocol::a2a::router(
             A2aState::new(
                 card,
@@ -725,6 +752,13 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
         } else {
             eprintln!(
                 "altius: browser MCP not attached (set --browser-mcp-cmd or ALTIUS_BROWSER_MCP_CMD)"
+            );
+        }
+        if github_enabled {
+            eprintln!("altius: GitHub dispatch enabled (agent_name=github, /github, or @GitHub)");
+        } else {
+            eprintln!(
+                "altius: GitHub MCP not attached (set --github-mcp-url or ALTIUS_GITHUB_MCP_URL)"
             );
         }
         axum::serve(listener, app)

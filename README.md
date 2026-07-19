@@ -136,6 +136,7 @@ third-party marketplace. The built-in skills are defined in
 |---|---|
 | `/scan`, `/audit` | Security specialist (read-only scanners) |
 | `/browser` | Browser specialist (attached browser MCP server) |
+| `/github` | GitHub specialist (attached GitHub MCP server) |
 | `/pay` | Supervisor (payment specialist is still stubbed, so policy and prompts still apply) |
 
 **Plugin packs (v0)** are a small JSON manifest that bundles the skills a
@@ -146,6 +147,28 @@ example at
 [`examples/plugins/web3-starter.json`](examples/plugins/web3-starter.json)
 and the loader in
 [`crates/altius-cli/src/plugin.rs`](crates/altius-cli/src/plugin.rs).
+
+### GitHub connector
+
+Altius can attach directly to an authenticated streamable-HTTP GitHub MCP
+server for repository inspection and pull-request workflows:
+
+```bash
+export GITHUB_TOKEN="<fine-grained-token>"
+
+altius fleet run \
+  --github-mcp-url https://api.githubcopilot.com/mcp/ \
+  --prompt "/github inspect open pull requests"
+```
+
+The connector is read-only by default. To permit branch/file writes and
+pull-request creation/update, explicitly add
+`--github-access pull-requests`. Merge, delete, release, workflow-dispatch,
+and repository-administration tools remain denied. The token value is read
+from `GITHUB_TOKEN` (or the variable named by `--github-token-env`) at
+connection time; it is never accepted as a CLI value, logged, persisted, or
+placed in model context. Use a fine-grained token scoped to only the target
+repositories and required operations.
 
 **Remote deployment:** binding to a non-loopback address requires
 `--token` or `ALTIUS_FLEET_TOKEN` (loopback-only demos may omit it). Clients

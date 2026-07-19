@@ -802,6 +802,7 @@ mod tests {
         assert_eq!(FleetRoute::parse("coder"), FleetRoute::Coder);
         assert_eq!(FleetRoute::parse("both"), FleetRoute::Both);
         assert_eq!(FleetRoute::parse("browser"), FleetRoute::Browser);
+        assert_eq!(FleetRoute::parse("github"), FleetRoute::GitHub);
         assert_eq!(FleetRoute::parse("security"), FleetRoute::Security);
     }
 
@@ -818,6 +819,14 @@ mod tests {
         assert_eq!(
             resolve_forced_route(None, "please @Browser this"),
             Some(FleetRoute::Browser)
+        );
+        assert_eq!(
+            resolve_forced_route(Some("github"), "anything"),
+            Some(FleetRoute::GitHub)
+        );
+        assert_eq!(
+            resolve_forced_route(None, "please @GitHub inspect this"),
+            Some(FleetRoute::GitHub)
         );
         assert_eq!(
             resolve_forced_route(Some("security"), "anything"),
@@ -852,6 +861,31 @@ mod tests {
             }
             SupervisorOutcome::Awaiting { reason, .. } => {
                 panic!("offline security run should not await: {reason}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_name_github_forces_github_route_offline() {
+        let (_run_id, outcome) = run_supervisor_outcome_for(
+            Arc::new(OfflineLlmClient),
+            "inspect open pull requests",
+            SupervisorOptions {
+                agent_name: Some("github".into()),
+                ..SupervisorOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+        match outcome {
+            SupervisorOutcome::Finished(state) => {
+                assert_eq!(state.route, FleetRoute::GitHub);
+                assert_eq!(state.forced_route, Some(FleetRoute::GitHub));
+                assert!(state.github_notes.is_some());
+                assert!(state.trace.iter().any(|t| t == "github"));
+            }
+            SupervisorOutcome::Awaiting { reason, .. } => {
+                panic!("offline GitHub run should not await: {reason}")
             }
         }
     }

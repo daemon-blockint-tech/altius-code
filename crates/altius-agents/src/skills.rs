@@ -86,6 +86,14 @@ mod tests {
     }
 
     #[test]
+    fn parses_github_skill() {
+        let skill = parse_slash_skill("/github inspect pull requests").unwrap();
+        assert_eq!(skill.name, "github");
+        assert_eq!(skill.route, FleetRoute::GitHub);
+        assert_eq!(agent_name_for_route(skill.route), "github");
+    }
+
+    #[test]
     fn unknown_skill_is_none() {
         assert!(parse_slash_skill("/deploy everything").is_none());
         assert!(parse_slash_skill("no slash").is_none());

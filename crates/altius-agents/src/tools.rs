@@ -614,6 +614,35 @@ mod tests {
     use crate::error::AgentResult;
 
     #[test]
+    fn github_tool_policy_is_least_privilege() {
+        assert!(github_tool_allowed(
+            "get_file_contents",
+            GitHubAccess::ReadOnly
+        ));
+        assert!(github_tool_allowed("search_code", GitHubAccess::ReadOnly));
+        assert!(!github_tool_allowed(
+            "create_pull_request",
+            GitHubAccess::ReadOnly
+        ));
+        assert!(github_tool_allowed(
+            "create_pull_request",
+            GitHubAccess::PullRequests
+        ));
+        assert!(github_tool_allowed(
+            "github__push_files",
+            GitHubAccess::PullRequests
+        ));
+        assert!(!github_tool_allowed(
+            "merge_pull_request",
+            GitHubAccess::PullRequests
+        ));
+        assert!(!github_tool_allowed(
+            "delete_repository",
+            GitHubAccess::PullRequests
+        ));
+    }
+
+    #[test]
     fn project_root_marker_is_parsed() {
         assert_eq!(
             project_root_from_prompt("lint this [project_path=/tmp/demo] please"),
