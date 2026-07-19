@@ -46,7 +46,7 @@
     mainInner: document.getElementById("main-inner"),
     sidebarHistory: document.getElementById("sidebar-history"),
     historyList: document.getElementById("history-list"),
-    sidebarMeta: document.querySelector(".sidebar-meta"),
+    topbarMeta: document.querySelector(".topbar-meta"),
   };
 
   let selectedId = null;
@@ -513,8 +513,8 @@
     }
   });
 
-  if (els.sidebarMeta) {
-    els.sidebarMeta.textContent = authToken
+  if (els.topbarMeta) {
+    els.topbarMeta.textContent = authToken
       ? "localhost · bearer auth"
       : "localhost · no auth";
   }

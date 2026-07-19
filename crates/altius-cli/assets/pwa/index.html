@@ -3,161 +3,166 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0b101b" />
+    <meta name="theme-color" content="#141413" />
     <meta name="color-scheme" content="light dark" />
     <meta name="referrer" content="no-referrer" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; connect-src 'self'; img-src 'self'; manifest-src 'self'; script-src 'self'; style-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; connect-src 'self'; img-src 'self'; manifest-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=Poppins:wght@600;700&display=swap"
+      rel="stylesheet"
     />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="stylesheet" href="design-system.css" />
     <title>Altius Fleet</title>
   </head>
   <body>
-    <div class="app-shell">
-      <aside class="sidebar" aria-label="Altius Fleet">
-        <h1 class="brand">Altius Fleet</h1>
-
-        <button type="button" class="nav-item nav-new" id="nav-new">
-          <span class="nav-glyph" aria-hidden="true">+</span> New run
+    <header class="topbar">
+      <h1 class="topbar-brand">Altius Fleet</h1>
+      <nav class="topbar-nav" aria-label="Primary">
+        <button
+          type="button"
+          class="nav-item nav-new"
+          id="nav-new"
+        >
+          <span class="nav-glyph" aria-hidden="true">+</span> New
         </button>
+        <button
+          type="button"
+          class="nav-item active"
+          id="nav-dispatch"
+          data-view="dispatch"
+          aria-current="page"
+        >
+          Dispatch
+        </button>
+        <button type="button" class="nav-item" id="nav-runs" data-view="runs">
+          Runs
+        </button>
+      </nav>
+      <div class="topbar-actions">
+        <span class="topbar-meta">localhost · no auth</span>
+        <button
+          type="button"
+          class="btn btn-ghost btn-pill btn-icon"
+          id="theme-toggle"
+          title="Theme: system → light → dark"
+          aria-label="Cycle color theme"
+        >
+          <span id="theme-icon" aria-hidden="true">◐</span>
+        </button>
+      </div>
+    </header>
 
-        <nav class="sidebar-nav" aria-label="Primary">
-          <button
-            type="button"
-            class="nav-item active"
-            id="nav-dispatch"
-            data-view="dispatch"
-            aria-current="page"
-          >
-            Dispatch
-          </button>
-          <button type="button" class="nav-item" id="nav-runs" data-view="runs">
-            Runs
-          </button>
-        </nav>
+    <main class="main">
+      <div class="main-inner home" id="main-inner">
+        <section class="view" id="view-dispatch" data-view-panel="dispatch">
+          <div class="history-section" id="sidebar-history" hidden>
+            <p class="history-heading">Recent</p>
+            <ul class="history-list" id="history-list"></ul>
+          </div>
 
-        <div class="sidebar-history" id="sidebar-history" hidden>
-          <p class="sidebar-heading">Recent</p>
-          <ul class="history-list" id="history-list"></ul>
-        </div>
+          <div class="home-head">
+            <p class="eyebrow" id="agent-eyebrow">browser</p>
+            <h2 class="page-heading">What should the fleet do?</h2>
+          </div>
 
-        <div class="sidebar-footer">
-          <button
-            type="button"
-            class="btn btn-ghost btn-pill btn-icon"
-            id="theme-toggle"
-            title="Theme: system → light → dark"
-            aria-label="Cycle color theme"
-          >
-            <span id="theme-icon" aria-hidden="true">◐</span>
-          </button>
-          <p class="sidebar-meta">localhost · no auth</p>
-        </div>
-      </aside>
-
-      <main class="main">
-        <div class="main-inner home" id="main-inner">
-          <section class="view" id="view-dispatch" data-view-panel="dispatch">
-            <div class="home-head">
-              <p class="eyebrow" id="agent-eyebrow">browser</p>
-              <h2 class="page-heading">What should the fleet do?</h2>
-            </div>
-
-            <div class="composer" role="form" aria-label="Dispatch a run">
-              <label class="visually-hidden" for="prompt">Prompt</label>
-              <textarea
-                id="prompt"
-                placeholder="@Browser open https://example.com and summarize the title"
-                rows="3"
-              ></textarea>
-              <div class="composer-footer">
-                <div
-                  class="agent-pills"
-                  id="agent-pills"
-                  role="group"
-                  aria-label="Agent"
-                >
-                  <button
-                    type="button"
-                    class="agent-pill"
-                    data-agent="browser"
-                    aria-pressed="true"
-                  >
-                    browser
-                  </button>
-                  <button
-                    type="button"
-                    class="agent-pill"
-                    data-agent="security"
-                    aria-pressed="false"
-                  >
-                    security
-                  </button>
-                  <button
-                    type="button"
-                    class="agent-pill"
-                    data-agent="altius"
-                    aria-pressed="false"
-                  >
-                    altius
-                  </button>
-                </div>
+          <div class="composer" role="form" aria-label="Dispatch a run">
+            <label class="visually-hidden" for="prompt">Prompt</label>
+            <textarea
+              id="prompt"
+              placeholder="@Browser open https://example.com and summarize the title"
+              rows="3"
+            ></textarea>
+            <div class="composer-footer">
+              <div
+                class="agent-pills"
+                id="agent-pills"
+                role="group"
+                aria-label="Agent"
+              >
                 <button
                   type="button"
-                  class="btn btn-round"
-                  id="send"
-                  aria-label="Send prompt"
-                  title="Send (⌘ / Ctrl + Enter)"
+                  class="agent-pill"
+                  data-agent="browser"
+                  aria-pressed="true"
                 >
-                  <span id="send-icon" aria-hidden="true">↑</span>
+                  browser
+                </button>
+                <button
+                  type="button"
+                  class="agent-pill"
+                  data-agent="security"
+                  aria-pressed="false"
+                >
+                  security
+                </button>
+                <button
+                  type="button"
+                  class="agent-pill"
+                  data-agent="altius"
+                  aria-pressed="false"
+                >
+                  altius
                 </button>
               </div>
-            </div>
-
-            <p id="error" class="error-text" hidden></p>
-
-            <div id="detail" class="card" hidden>
-              <div class="detail-header">
-                <strong class="detail-id" id="detail-id"></strong>
-                <span id="detail-status" class="badge"></span>
-              </div>
-              <pre id="detail-body" class="detail-body"></pre>
-              <div id="approval" class="approval card-warn" hidden>
-                <h3 class="approval-title" id="approval-title">Approve to continue</h3>
-                <pre id="approval-detail" class="approval-detail" hidden></pre>
-                <p class="approval-copy">
-                  This run is paused for your approval. Resume it, or cancel.
-                </p>
-                <label class="visually-hidden" for="approval-msg">Resume message</label>
-                <input
-                  class="input"
-                  id="approval-msg"
-                  type="text"
-                  placeholder="Optional note for the agent"
-                  autocomplete="off"
-                />
-                <div class="approval-actions">
-                  <button type="button" class="btn" id="approve">Resume</button>
-                  <button type="button" class="btn btn-danger" id="cancel">Cancel</button>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section class="view" id="view-runs" data-view-panel="runs">
-            <div class="view-header">
-              <h2 class="section-heading">Runs</h2>
-              <button type="button" class="btn btn-ghost btn-pill" id="refresh">
-                Refresh
+              <button
+                type="button"
+                class="btn btn-round"
+                id="send"
+                aria-label="Send prompt"
+                title="Send (⌘ / Ctrl + Enter)"
+              >
+                <span id="send-icon" aria-hidden="true">↑</span>
               </button>
             </div>
-            <ul id="runs" class="runs-list" aria-label="Runs"></ul>
-          </section>
-        </div>
-      </main>
-    </div>
+          </div>
+
+          <p id="error" class="error-text" hidden></p>
+
+          <div id="detail" class="card" hidden>
+            <div class="detail-header">
+              <strong class="detail-id" id="detail-id"></strong>
+              <span id="detail-status" class="badge"></span>
+            </div>
+            <pre id="detail-body" class="detail-body"></pre>
+            <div id="approval" class="approval card-warn" hidden>
+              <h3 class="approval-title" id="approval-title">Approve to continue</h3>
+              <pre id="approval-detail" class="approval-detail" hidden></pre>
+              <p class="approval-copy">
+                This run is paused for your approval. Resume it, or cancel.
+              </p>
+              <label class="visually-hidden" for="approval-msg">Resume message</label>
+              <input
+                class="input"
+                id="approval-msg"
+                type="text"
+                placeholder="Optional note for the agent"
+                autocomplete="off"
+              />
+              <div class="approval-actions">
+                <button type="button" class="btn" id="approve">Resume</button>
+                <button type="button" class="btn btn-danger" id="cancel">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-runs" data-view-panel="runs">
+          <div class="view-header">
+            <h2 class="section-heading">Runs</h2>
+            <button type="button" class="btn btn-ghost btn-pill" id="refresh">
+              Refresh
+            </button>
+          </div>
+          <ul id="runs" class="runs-list" aria-label="Runs"></ul>
+        </section>
+      </div>
+    </main>
     <script src="beeacp-client.js"></script>
     <script src="app.js"></script>
   </body>

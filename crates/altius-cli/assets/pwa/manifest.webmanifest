@@ -4,7 +4,7 @@
   "description": "Thin client for Altius BeeAI ACP runs and @Browser dispatch",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#0b101b",
-  "theme_color": "#0b101b",
+  "background_color": "#141413",
+  "theme_color": "#141413",
   "lang": "en"
 }
