@@ -1,0 +1,35 @@
+{
+  "_comment": "Branding overlay for a VS Code OSS build named 'Altius IDE'. Applied on top of microsoft/vscode's own product.json by ide/build/bootstrap.sh (deep-merged, this file wins). Field names/meaning follow the VS Code OSS product.json contract used by community builds (VSCodium etc.).",
+  "nameShort": "Altius IDE",
+  "nameLong": "Altius IDE",
+  "applicationName": "altius-ide",
+  "dataFolderName": ".altius-ide",
+  "win32MutexName": "altiuside",
+  "win32DirName": "Altius IDE",
+  "win32NameVersion": "Altius IDE",
+  "win32RegValueName": "AltiusIDE",
+  "win32AppId": "REPLACE_WITH_GENERATED_GUID_win32AppId",
+  "win32x64AppId": "REPLACE_WITH_GENERATED_GUID_win32x64AppId",
+  "win32arm64AppId": "REPLACE_WITH_GENERATED_GUID_win32arm64AppId",
+  "win32AppUserModelId": "Altius.AltiusIDE",
+  "win32ShellNameShort": "Altius IDE",
+  "darwinBundleIdentifier": "tech.altius.ide",
+  "linuxIconName": "altius-ide",
+  "licenseUrl": "https://github.com/daemon-blockint-tech/altius-code/blob/main/LICENSE",
+  "reportIssueUrl": "https://github.com/daemon-blockint-tech/altius-code/issues/new",
+  "documentationUrl": "https://github.com/daemon-blockint-tech/altius-code#readme",
+  "requestFeatureUrl": "https://github.com/daemon-blockint-tech/altius-code/issues/new",
+  "urlProtocol": "altius-ide",
+  "quality": "stable",
+  "extensionsGallery": {
+    "_comment": "No official VS Code Marketplace access without Microsoft's terms. Point at Open VSX, the community-run alternative, same as VSCodium.",
+    "serviceUrl": "https://open-vsx.org/vscode/gallery",
+    "itemUrl": "https://open-vsx.org/vscode/item"
+  },
+  "builtInExtensions": [],
+  "extensionAllowedProposedApi": [],
+  "enableTelemetry": false,
+  "aiConfig": {
+    "ariaKey": ""
+  }
+}
