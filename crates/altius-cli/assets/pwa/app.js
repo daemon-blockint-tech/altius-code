@@ -17,6 +17,7 @@
     history.replaceState(null, "", cleanUrl);
   }
   let authToken = sessionStorage.getItem(TOKEN_KEY) || "";
+  let client = createBeeAcpClient({ baseUrl: apiBase, token: authToken });
 
   const els = {
     prompt: document.getElementById("prompt"),
@@ -30,6 +31,8 @@
     detailStatus: document.getElementById("detail-status"),
     detailBody: document.getElementById("detail-body"),
     approval: document.getElementById("approval"),
+    approvalTitle: document.getElementById("approval-title"),
+    approvalDetail: document.getElementById("approval-detail"),
     approvalMsg: document.getElementById("approval-msg"),
     approve: document.getElementById("approve"),
     cancel: document.getElementById("cancel"),
@@ -70,31 +73,12 @@
     els.error.textContent = message;
   }
 
-  function authHeaders(extra = {}) {
-    const headers = { "content-type": "application/json", ...extra };
-    if (authToken) headers.authorization = `Bearer ${authToken}`;
-    return headers;
+  function syncClientToken() {
+    client = createBeeAcpClient({ baseUrl: apiBase, token: authToken });
   }
 
   async function api(path, options = {}) {
-    const response = await fetch(`${apiBase}${path}`, {
-      headers: authHeaders(options.headers || {}),
-      ...options,
-    });
-    const text = await response.text();
-    let body = null;
-    try {
-      body = text ? JSON.parse(text) : null;
-    } catch {
-      body = { raw: text };
-    }
-    if (!response.ok) {
-      const msg =
-        (body && (body.error || body.message || body.detail)) ||
-        `${response.status} ${response.statusText}`;
-      throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
-    }
-    return body;
+    return client.request(path, options);
   }
 
   function flattenParts(messages) {
@@ -320,6 +304,18 @@
     ].join("\n");
 
     els.approval.hidden = run.status !== "awaiting";
+    if (run.status === "awaiting") {
+      const summary = formatApprovalSummary(run.approval);
+      if (els.approvalTitle) els.approvalTitle.textContent = summary;
+      const detail = formatApprovalDetail(run.approval);
+      if (els.approvalDetail) {
+        els.approvalDetail.textContent = detail;
+        els.approvalDetail.hidden = !detail;
+      }
+    } else if (els.approvalDetail) {
+      els.approvalDetail.hidden = true;
+      els.approvalDetail.textContent = "";
+    }
   }
 
   function stopEvents() {
@@ -333,34 +329,25 @@
     stopEvents();
     if (!run) return;
     if (run.status !== "in-progress" && run.status !== "created") return;
-    if (typeof EventSource === "undefined") return;
     try {
-      const url = new URL(`${apiBase}/runs/${run.run_id}/events`);
-      if (authToken) url.searchParams.set("token", authToken);
-      eventSource = new EventSource(url.toString());
-      eventSource.addEventListener("run", (ev) => {
-        try {
-          const next = JSON.parse(ev.data);
-          known.set(next.run_id, next);
-          renderDetail(next);
-          const runs = [...known.values()].sort(
-            (a, b) => new Date(b.created_at) - new Date(a.created_at)
-          );
-          renderRuns(runs);
-          if (
-            next.status !== "in-progress" &&
-            next.status !== "created"
-          ) {
-            stopEvents();
-          }
-        } catch {
-          /* ignore malformed */
+      eventSource = client.subscribeRunEvents(run.run_id, (next) => {
+        known.set(next.run_id, next);
+        renderDetail(next);
+        const runs = [...known.values()].sort(
+          (a, b) => new Date(b.created_at) - new Date(a.created_at)
+        );
+        renderRuns(runs);
+        if (next.status !== "in-progress" && next.status !== "created") {
+          stopEvents();
         }
       });
-      eventSource.onerror = () => {
-        stopEvents();
-        maybePoll(run);
-      };
+      if (!eventSource) maybePoll(run);
+      else {
+        eventSource.onerror = () => {
+          stopEvents();
+          maybePoll(run);
+        };
+      }
     } catch {
       maybePoll(run);
     }
@@ -369,11 +356,11 @@
   async function refreshRuns() {
     showError("");
     try {
-      const runs = await api("/runs");
+      const runs = await client.listRuns();
       renderRuns(Array.isArray(runs) ? runs : []);
       if (selectedId) {
         const current =
-          known.get(selectedId) || (await api(`/runs/${selectedId}`));
+          known.get(selectedId) || (await client.getRun(selectedId));
         renderDetail(current);
         maybeEvents(current);
         maybePoll(current);
@@ -396,7 +383,7 @@
   async function selectRun(id, quiet = false) {
     selectedId = id;
     try {
-      const run = await api(`/runs/${id}`);
+      const run = await client.getRun(id);
       known.set(id, run);
       if (!quiet) showError("");
       renderDetail(run);
@@ -439,18 +426,12 @@
     if (els.sendIcon) els.sendIcon.textContent = "…";
     showError("");
     try {
-      const run = await api("/runs", {
-        method: "POST",
-        body: JSON.stringify({
-          agent_name: agent,
-          input: [
-            {
-              role: "user",
-              parts: [{ content_type: "text/plain", content: prompt }],
-            },
-          ],
-        }),
-      });
+      const run = await client.createRun(agent, [
+        {
+          role: "user",
+          parts: [{ content_type: "text/plain", content: prompt }],
+        },
+      ]);
       known.set(run.run_id, run);
       selectedId = run.run_id;
       await refreshRuns();
@@ -473,16 +454,14 @@
       const message = els.approvalMsg.value.trim();
       const body = message
         ? {
+            decision: { approved: true, note: message },
             message: {
               role: "user",
               parts: [{ content_type: "text/plain", content: message }],
             },
           }
-        : {};
-      const run = await api(`/runs/${selectedId}`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+        : { decision: { approved: true } };
+      const run = await client.resumeRun(selectedId, body);
       known.set(run.run_id, run);
       renderDetail(run);
       maybeEvents(run);
@@ -499,10 +478,7 @@
     if (!selectedId) return;
     els.cancel.disabled = true;
     try {
-      const run = await api(`/runs/${selectedId}/cancel`, {
-        method: "POST",
-        body: "{}",
-      });
+      const run = await client.cancelRun(selectedId);
       known.set(run.run_id, run);
       renderDetail(run);
       stopEvents();
@@ -549,6 +525,7 @@
     });
   }
 
+  syncClientToken();
   initTheme();
   setAgent("browser");
   setView("dispatch");

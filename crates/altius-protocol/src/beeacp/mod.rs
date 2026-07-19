@@ -14,11 +14,17 @@
 mod auth;
 mod model;
 mod routes;
+mod openapi;
 mod sqlite_store;
 mod store;
 
 pub use auth::{require_bearer, BearerAuth};
-pub use model::{Message, MessagePart, Run, RunStatus};
+pub use model::{
+    ApprovalDecision, ApprovalKind, HealthResponse, LamportDelta, Message, MessagePart,
+    ProtocolErrorBody, ProtocolErrorDetail, ReadyResponse, Run, RunApproval, RunStatus,
+    TransactionPreview,
+};
+pub use openapi::{openapi_router, openapi_spec, BeeAcpApiDoc};
 pub use routes::{
     router, BeeAcpState, CreateRunRequest, NoopExecutor, ResumeRunRequest, RunExecutor, RunOutcome,
 };

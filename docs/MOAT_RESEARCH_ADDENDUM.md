@@ -165,3 +165,101 @@ Dari docs resmi Anthropic (research preview, diperbarui 2026):
 - https://www.alchemy.com/blog/how-to-build-solana-ai-agents-in-2026
 - https://github.com/manavnotop/lamport
 - https://github.com/Prestes16/luna-agent
+
+## 5. Studi banding SDK: opencode (19 Jul 2026)
+
+Sumber: dokumen SDK resmi opencode (`https://opencode.ai/docs/sdk/`, salinan
+diunggah) + dokumen Server (`https://opencode.ai/docs/server/`). opencode
+dilacak sebagai kompetitor generalis kunci di §1 [Strategi Moat](MOAT_STRATEGY.md).
+Perbandingan ini menilai *permukaan SDK/API remote*-nya terhadap permukaan
+remote Altius (BeeACP HTTP di `crates/altius-protocol/src/beeacp/` +
+`crates/altius-cli/src/serve_command.rs`).
+
+### 5.1 Ringkasan permukaan SDK opencode
+
+- **Bentuk klien:** paket npm `@opencode-ai/sdk`. Dua entrypoint —
+  `createOpencode()` men-*spawn* server + klien sekaligus; `createOpencodeClient({ baseUrl })`
+  menyambung ke server yang sudah jalan. Opsi klien: `baseUrl`, `fetch`
+  kustom, `parseAs`, `responseStyle`, `throwOnError`.
+- **Tipe & generasi kode:** semua tipe (`Session`, `Message`, `Part`, `Agent`,
+  dst.) **di-generate dari spec OpenAPI 3.1 server** dan dikomit sebagai
+  `types.gen.ts`. Server headless (`opencode serve`) mengekspos spec di
+  endpoint `/doc`; SDK diturunkan darinya, sehingga klien bahasa lain bisa
+  dibangkitkan. Nav dokumen menandakan setidaknya SDK JS/TS + Go.
+- **Model API — *session-centric*, bukan *run-centric*:** unit utamanya
+  `Session` yang tahan lama, berisi `Message`/`Part`, dengan `children`
+  (subsession), `fork`, `revert`/`unrevert`, `share`/`unshare`, `summarize`,
+  `todo` per-session, dan riwayat pesan yang bisa di-*list*/di-*get*.
+  `session.prompt` mendukung `noReply` (injeksi konteks) dan
+  **structured output** (`format: json_schema`, dengan `retryCount`).
+- **Auth:** HTTP Basic (`OPENCODE_SERVER_PASSWORD`, user default `opencode`)
+  di sisi server; plus OAuth *provider* (`/provider/{id}/oauth/...`) dan
+  `PUT /auth/:id` untuk kredensial provider model. CORS via flag `--cors`.
+- **Eventing/streaming:** **satu bus SSE global** (`GET /event`, frame pertama
+  `server.connected` lalu event bus bertipe dengan `event.type` +
+  `event.properties`). Bukan per-run. Ada `POST /session/:id/prompt_async`
+  (balas `204`, hasil diamati lewat event) dan endpoint izin eksplisit
+  `POST /session/:id/permissions/:permissionID` untuk merespons *permission
+  request* — jadi tool-call/izin adalah event bertipe di kabel.
+- **Lain-lain di kabel:** daftar `tool` bertipe skema JSON (`/experimental/tool`),
+  status/penambahan MCP (`/mcp`), daftar `agent`, status LSP/formatter, dan
+  jembatan TUI (`/tui/*`). **Versioning:** `global.health()` mengembalikan
+  `version`; SDK diberi versi di npm; spec `/doc` jadi kontrak sumber tunggal.
+
+### 5.2 Gap vs permukaan remote Altius (BeeACP)
+
+| Aspek | opencode | Altius BeeACP (sekarang) | Gap / catatan |
+|---|---|---|---|
+| Spec mesin | OpenAPI 3.1 di `/doc`, jadi sumber generasi | Tidak ada spec; hanya tabel prosa di docs | **Gap nyata** — tak ada kontrak mesin |
+| Klien resmi | Paket npm typed, tipe di-generate | PWA vanilla JS `fetch` tanpa tipe (`assets/pwa/app.js`) | **Gap** — klien tak typed, rawan drift |
+| Cakupan bahasa | JS/TS (+ Go), generatable dari OpenAPI | — | Ikut dari gap spec |
+| Unit utama | `Session` tahan lama + riwayat pesan | `Run` sekali-jalan (`created→in-progress→awaiting→…`) | Beda paradigma; **sengaja** lebih ramping |
+| Riwayat pesan | `list/get message`, `part`, `fork`, `revert`, `todo` | Hanya `input`/`output` per run; tak ada list message | Gap fitur — *scope generalis*, lihat §5.3 |
+| Event model | 1 bus SSE bertipe, granular (part/tool/permission) | Per-run `GET /runs/{id}/events`, polling 500 ms, snapshot Run utuh saat berubah | **Gap** — event kasar, tak bertipe granular |
+| Izin/tool di kabel | `permissions/:permissionID` + event izin bertipe | HITL = status `awaiting`; resume = injeksi pesan generik | **Gap paling relevan web3** — approval tak berstruktur |
+| Structured output | `json_schema` + retry | Tidak ada | Scope generalis; abaikan untuk kini |
+| Auth | HTTP Basic + OAuth provider | Bearer token (+ `?token=` untuk SSE) | **Setara/lebih baik** untuk vertikal; pertahankan |
+| Discovery | mDNS opsional | A2A agent-card + ANP stub | Beda jalur; memadai |
+
+### 5.3 Rekomendasi respons Altius (terkecil, sesuai strategi moat)
+
+Prinsip: **jangan mengkloning SDK generalis** (session/fork/todo/tui/
+structured-output = medan yang sengaja dihindari, lihat §5 strategi utama).
+Ambil hanya mekanika yang menaikkan kepercayaan + integrasi tanpa memperluas
+permukaan generalis.
+
+**Status (Juli 2026):** item 1–4 di bawah **selesai** di repo (`/openapi.json`,
+`beeacp-client.js`, field `approval` pada run/SSE, §2.1 `FLEET_ARCHITECTURE.md`).
+
+1. **Terbitkan spec OpenAPI 3.1 untuk permukaan BeeACP** (`/runs`,
+   `/runs/{id}`, `/runs/{id}/events`, `/cancel`, `/resume`) + kartu A2A.
+   Bangkitkan dari kode via `utoipa` (turunan dari struct `Run`/`Message`/
+   `CreateRunRequest`/`ResumeRunRequest` yang sudah `Serialize`/`Deserialize`),
+   sajikan di endpoint `/doc` atau `/openapi.json`, dan komit artefaknya.
+   *Leverage tertinggi:* satu artefak menutup gap "spec" **dan** "klien typed"
+   sekaligus, dengan biaya kecil karena tipe wire sudah ada.
+2. **Generate klien TS tipis untuk PWA** dari spec itu
+   (`openapi-typescript` + `openapi-fetch`) untuk menggantikan `fetch`
+   tanpa tipe di `assets/pwa/app.js` — tetap *thin client* zero-build, tapi
+   typed dan tahan-drift. Publikasi ke npm bisa ditunda; cukup vendor dulu.
+3. **Naikkan HITL `awaiting` jadi event kabel bertipe** — ini adaptasi
+   web3-relevan dari pola `permission` opencode, *tanpa* mengadopsi model
+   session. Sertakan payload approval terstruktur (mis. ringkasan
+   `DiffReport`/preview TxGuard: "Transfer 0.5 SOL", program ID dikenal) di
+   frame SSE `event: run` saat status `awaiting`, plus bentuk balasan
+   resume/izin bertipe. Ini menyatukan §4.3 (P0 `DiffReport` readable) dengan
+   permukaan remote, dan justru menjadi pembeda vertikal: "setujui pratinjau
+   transaksi", bukan sekadar "lanjutkan sesi".
+4. **Dokumentasikan protokol wire** (status lifecycle, auth Bearer, semantik
+   SSE) di docs sebagai pelengkap spec, sejalan gaya §4.
+
+**Sengaja TIDAK ditiru:** session/message-history/fork/revert/todo,
+`prompt_async`, jembatan TUI, dan structured-output `json_schema` — semuanya
+memperlebar ke arah agent generalis dan bertentangan dengan §5 strategi utama.
+
+### 5.4 Sumber
+
+- https://opencode.ai/docs/sdk/ (salinan unggahan `sdk-0.md`, terakhir diperbarui 17 Jul 2026)
+- https://opencode.ai/docs/server/ (OpenAPI 3.1 di `/doc`, HTTP Basic auth, bus SSE `/event`)
+- Referensi tipe: `packages/sdk/js/src/gen/types.gen.ts` (repo opencode)
+- Bandingkan: `crates/altius-protocol/src/beeacp/{routes.rs,model.rs}`, `crates/altius-cli/src/serve_command.rs`, `crates/altius-cli/assets/pwa/app.js`

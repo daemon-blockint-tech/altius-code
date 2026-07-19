@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use tokio::sync::RwLock;
 
-use super::model::{Message, Run, RunStatus};
+use super::model::{Message, Run, RunApproval, RunStatus};
 use crate::error::{ProtocolError, Result};
 
 /// Async, thread-safe storage for BeeAI ACP runs.
@@ -25,14 +25,16 @@ pub trait RunStore: Send + Sync {
     /// List known runs (newest first when the implementation can order).
     async fn list(&self) -> Result<Vec<Run>>;
 
-    /// Atomically transition a run to `next`, optionally attaching output
-    /// or an error message. Returns the updated run.
+    /// Atomically transition a run to `next`, optionally attaching output,
+    /// an error message, or an approval payload (when entering `awaiting`).
+    /// Returns the updated run.
     async fn transition(
         &self,
         run_id: RunId,
         next: RunStatus,
         output: Option<Vec<Message>>,
         error: Option<String>,
+        approval: Option<RunApproval>,
     ) -> Result<Run>;
 }
 
@@ -83,6 +85,7 @@ impl RunStore for InMemoryRunStore {
         next: RunStatus,
         output: Option<Vec<Message>>,
         error: Option<String>,
+        approval: Option<RunApproval>,
     ) -> Result<Run> {
         let mut runs = self.runs.write().await;
         let run = runs
@@ -100,6 +103,13 @@ impl RunStore for InMemoryRunStore {
         }
         if let Some(error) = error {
             run.error = Some(error);
+        }
+        if next == RunStatus::Awaiting {
+            if let Some(approval) = approval {
+                run.approval = Some(approval);
+            }
+        } else {
+            run.approval = None;
         }
         if next.is_terminal() {
             run.finished_at = Some(Utc::now());
@@ -147,13 +157,13 @@ mod tests {
 
         // created → completed is forbidden.
         let err = store
-            .transition(id, RunStatus::Completed, None, None)
+            .transition(id, RunStatus::Completed, None, None, None)
             .await
             .unwrap_err();
         assert!(matches!(err, ProtocolError::InvalidTransition { .. }));
 
         store
-            .transition(id, RunStatus::InProgress, None, None)
+            .transition(id, RunStatus::InProgress, None, None, None)
             .await
             .unwrap();
         let done = store
@@ -161,6 +171,7 @@ mod tests {
                 id,
                 RunStatus::Completed,
                 Some(vec![Message::user_text("done")]),
+                None,
                 None,
             )
             .await
@@ -171,7 +182,7 @@ mod tests {
 
         // Terminal states are frozen.
         assert!(store
-            .transition(id, RunStatus::InProgress, None, None)
+            .transition(id, RunStatus::InProgress, None, None, None)
             .await
             .is_err());
     }
@@ -203,7 +214,7 @@ mod tests {
                 let id = run.run_id;
                 store.create(run).await.unwrap();
                 store
-                    .transition(id, RunStatus::InProgress, None, None)
+                    .transition(id, RunStatus::InProgress, None, None, None)
                     .await
                     .unwrap();
             }));

@@ -14,7 +14,7 @@ use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 
 use super::auth::{require_bearer, BearerAuth};
-use super::model::{Message, Run, RunStatus};
+use super::model::{ApprovalDecision, Message, ProtocolErrorBody, Run, RunApproval, RunStatus};
 use super::store::RunStore;
 use crate::error::{ProtocolError, Result};
 use crate::limits;
@@ -28,7 +28,9 @@ pub enum RunOutcome {
     /// The run finished with the given output messages.
     Completed(Vec<Message>),
     /// The run is paused waiting for external input (`POST /runs/{id}`).
-    Awaiting,
+    Awaiting {
+        approval: RunApproval,
+    },
     /// The run failed with a human-readable reason.
     Failed(String),
 }
@@ -91,7 +93,7 @@ impl BeeAcpState {
 }
 
 /// Body for `POST /runs`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateRunRequest {
     /// Name of the agent to run.
     pub agent_name: String,
@@ -111,11 +113,14 @@ impl CreateRunRequest {
 }
 
 /// Body for `POST /runs/{id}`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ResumeRunRequest {
     /// Optional message answering whatever the run is awaiting.
     #[serde(default)]
     pub message: Option<Message>,
+    /// Typed approval decision (alternative to a free-form message).
+    #[serde(default)]
+    pub decision: Option<ApprovalDecision>,
 }
 
 /// Build the BeeAI ACP run-lifecycle router.
@@ -145,19 +150,25 @@ async fn apply_outcome(state: &BeeAcpState, run_id: RunId, outcome: RunOutcome) 
         RunOutcome::Completed(output) => {
             state
                 .store
-                .transition(run_id, RunStatus::Completed, Some(output), None)
+                .transition(run_id, RunStatus::Completed, Some(output), None, None)
                 .await
         }
-        RunOutcome::Awaiting => {
+        RunOutcome::Awaiting { approval } => {
             state
                 .store
-                .transition(run_id, RunStatus::Awaiting, None, None)
+                .transition(
+                    run_id,
+                    RunStatus::Awaiting,
+                    None,
+                    None,
+                    Some(approval),
+                )
                 .await
         }
         RunOutcome::Failed(reason) => {
             state
                 .store
-                .transition(run_id, RunStatus::Failed, None, Some(reason))
+                .transition(run_id, RunStatus::Failed, None, Some(reason), None)
                 .await
         }
     }
@@ -174,7 +185,7 @@ async fn settle_run(state: &BeeAcpState, run_id: RunId, outcome: Result<RunOutco
         Err(err) => {
             state
                 .store
-                .transition(run_id, RunStatus::Failed, None, Some(err.to_string()))
+                .transition(run_id, RunStatus::Failed, None, Some(err.to_string()), None)
                 .await
         }
     };
@@ -183,7 +194,19 @@ async fn settle_run(state: &BeeAcpState, run_id: RunId, outcome: Result<RunOutco
     }
 }
 
-async fn create_run(
+#[utoipa::path(
+    post,
+    path = "/runs",
+    tag = "runs",
+    request_body = CreateRunRequest,
+    responses(
+        (status = 202, description = "Run accepted and started", body = Run),
+        (status = 400, description = "Invalid input", body = ProtocolErrorBody),
+        (status = 401, description = "Unauthorized", body = ProtocolErrorBody),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn create_run(
     State(state): State<BeeAcpState>,
     Json(request): Json<CreateRunRequest>,
 ) -> Result<(StatusCode, Json<Run>)> {
@@ -194,7 +217,7 @@ async fn create_run(
 
     let started = state
         .store
-        .transition(run_id, RunStatus::InProgress, None, None)
+        .transition(run_id, RunStatus::InProgress, None, None, None)
         .await?;
 
     // Execute in the background; the caller polls `GET /runs/{id}`.
@@ -207,29 +230,92 @@ async fn create_run(
     Ok((StatusCode::ACCEPTED, Json(started)))
 }
 
-async fn list_runs(State(state): State<BeeAcpState>) -> Result<Json<Vec<Run>>> {
+#[utoipa::path(
+    get,
+    path = "/runs",
+    tag = "runs",
+    responses(
+        (status = 200, description = "Known runs (newest first)", body = [Run]),
+        (status = 401, description = "Unauthorized", body = ProtocolErrorBody),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn list_runs(State(state): State<BeeAcpState>) -> Result<Json<Vec<Run>>> {
     Ok(Json(state.store.list().await?))
 }
 
-async fn get_run(State(state): State<BeeAcpState>, Path(id): Path<String>) -> Result<Json<Run>> {
+#[utoipa::path(
+    get,
+    path = "/runs/{id}",
+    tag = "runs",
+    params(("id" = String, Path, description = "Run UUID")),
+    responses(
+        (status = 200, description = "Run snapshot (includes `approval` when awaiting)", body = Run),
+        (status = 400, description = "Invalid run id", body = ProtocolErrorBody),
+        (status = 404, description = "Run not found", body = ProtocolErrorBody),
+        (status = 401, description = "Unauthorized", body = ProtocolErrorBody),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn get_run(State(state): State<BeeAcpState>, Path(id): Path<String>) -> Result<Json<Run>> {
     let run = state.store.get(parse_run_id(&id)?).await?;
     Ok(Json(run))
 }
 
-async fn cancel_run(State(state): State<BeeAcpState>, Path(id): Path<String>) -> Result<Json<Run>> {
+#[utoipa::path(
+    post,
+    path = "/runs/{id}/cancel",
+    tag = "runs",
+    params(("id" = String, Path, description = "Run UUID")),
+    responses(
+        (status = 200, description = "Run cancelled", body = Run),
+        (status = 409, description = "Invalid transition", body = ProtocolErrorBody),
+        (status = 401, description = "Unauthorized", body = ProtocolErrorBody),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn cancel_run(State(state): State<BeeAcpState>, Path(id): Path<String>) -> Result<Json<Run>> {
     let run = state
         .store
-        .transition(parse_run_id(&id)?, RunStatus::Cancelled, None, None)
+        .transition(parse_run_id(&id)?, RunStatus::Cancelled, None, None, None)
         .await?;
     Ok(Json(run))
 }
 
-async fn resume_run(
+#[utoipa::path(
+    post,
+    path = "/runs/{id}",
+    tag = "runs",
+    params(("id" = String, Path, description = "Run UUID")),
+    request_body = ResumeRunRequest,
+    responses(
+        (status = 202, description = "Run resumed", body = Run),
+        (status = 409, description = "Invalid transition", body = ProtocolErrorBody),
+        (status = 401, description = "Unauthorized", body = ProtocolErrorBody),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn resume_run(
     State(state): State<BeeAcpState>,
     Path(id): Path<String>,
     Json(request): Json<ResumeRunRequest>,
 ) -> Result<(StatusCode, Json<Run>)> {
-    if let Some(message) = &request.message {
+    let mut message = request.message;
+    if message.is_none() {
+        if let Some(decision) = request.decision {
+            if !decision.approved {
+                let run = state
+                    .store
+                    .transition(parse_run_id(&id)?, RunStatus::Cancelled, None, None, None)
+                    .await?;
+                return Ok((StatusCode::OK, Json(run)));
+            }
+            if let Some(note) = decision.note.filter(|note| !note.is_empty()) {
+                message = Some(Message::user_text(note));
+            }
+        }
+    }
+    if let Some(message) = &message {
         message.validate()?;
     }
     let run_id = parse_run_id(&id)?;
@@ -238,12 +324,11 @@ async fn resume_run(
     // run is currently `awaiting`.
     let resumed = state
         .store
-        .transition(run_id, RunStatus::InProgress, None, None)
+        .transition(run_id, RunStatus::InProgress, None, None, None)
         .await?;
 
     let task_state = state.clone();
     let task_run = resumed.clone();
-    let message = request.message;
     tokio::spawn(async move {
         let outcome = task_state.executor.resume(&task_run, message).await;
         settle_run(&task_state, run_id, outcome).await;
@@ -258,7 +343,19 @@ async fn resume_run(
 /// The first frame is sent immediately; the stream closes after the frame
 /// that carries a terminal status. Axum's keep-alive sends comment pings so
 /// idle proxies do not drop the connection while a run is in flight.
-async fn run_events(
+#[utoipa::path(
+    get,
+    path = "/runs/{id}/events",
+    tag = "runs",
+    params(("id" = String, Path, description = "Run UUID")),
+    responses(
+        (status = 200, description = "Server-sent run snapshots (`event: run`, JSON Run body; includes `approval` when awaiting)"),
+        (status = 404, description = "Run not found", body = ProtocolErrorBody),
+        (status = 401, description = "Unauthorized", body = ProtocolErrorBody),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn run_events(
     State(state): State<BeeAcpState>,
     Path(id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = std::result::Result<Event, Infallible>>>> {
@@ -331,7 +428,9 @@ mod tests {
     #[async_trait]
     impl RunExecutor for AwaitingExecutor {
         async fn execute(&self, _run: &Run) -> Result<RunOutcome> {
-            Ok(RunOutcome::Awaiting)
+            Ok(RunOutcome::Awaiting {
+                approval: RunApproval::generic("approval required", Some("test".into())),
+            })
         }
 
         async fn resume(&self, _run: &Run, message: Option<Message>) -> Result<RunOutcome> {
@@ -454,7 +553,9 @@ mod tests {
         assert_eq!(status, StatusCode::ACCEPTED);
         assert_eq!(created["status"], "in-progress");
         let id = created["run_id"].as_str().unwrap();
-        wait_for_status(&app, id, "awaiting").await;
+        let awaiting = wait_for_status(&app, id, "awaiting").await;
+        assert_eq!(awaiting["approval"]["summary"], "approval required");
+        assert_eq!(awaiting["approval"]["kind"], "generic");
 
         let resume = json!({
             "message": { "role": "user", "parts": [{ "content_type": "text/plain", "content": "answer" }] },
@@ -465,6 +566,7 @@ mod tests {
 
         let done = wait_for_status(&app, id, "completed").await;
         assert_eq!(done["output"][0]["parts"][0]["content"], "answer");
+        assert!(done.get("approval").is_none() || done["approval"].is_null());
     }
 
     #[tokio::test]
@@ -547,6 +649,57 @@ mod tests {
         );
         let (status, _) = send(&app, post_json("/runs", create_body())).await;
         assert_eq!(status, StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn events_stream_includes_approval_when_awaiting() {
+        let app = app(Arc::new(AwaitingExecutor));
+        let (_, created) = send(&app, post_json("/runs", create_body())).await;
+        let id = created["run_id"].as_str().unwrap().to_owned();
+        wait_for_status(&app, &id, "awaiting").await;
+
+        // Approval lives on the run snapshot (SSE `event: run` frames carry the
+        // same JSON). Do not drain the SSE body here — awaiting is non-terminal,
+        // so keep-alive pings keep the stream open indefinitely.
+        let (_, run) = send(
+            &app,
+            Request::get(format!("/runs/{id}")).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(run["status"], "awaiting");
+        assert_eq!(run["approval"]["summary"], "approval required");
+        assert_eq!(run["approval"]["kind"], "generic");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/runs/{id}/events"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/event-stream")
+        );
+    }
+
+    #[tokio::test]
+    async fn openapi_json_is_available() {
+        let app = super::super::openapi::openapi_router().merge(app(Arc::new(NoopExecutor)));
+        let (status, body) = send(
+            &app,
+            Request::get("/openapi.json").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["openapi"], "3.1.0");
+        assert!(body["paths"]["/runs"].is_object());
     }
 
     #[tokio::test]

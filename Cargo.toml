@@ -51,7 +51,13 @@ tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 http = "1"
 base64 = "0.22"
 url = "2"
-rmcp = { version = "2.2", default-features = false, features = ["server", "client", "transport-io"] }
+rmcp = { version = "2.2", default-features = false, features = [
+    "server",
+    "client",
+    "transport-io",
+    "transport-streamable-http-client-reqwest",
+] }
 wasmtime = "43.0.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 proptest = "1"
+utoipa = { version = "5", features = ["axum_extras", "chrono"] }

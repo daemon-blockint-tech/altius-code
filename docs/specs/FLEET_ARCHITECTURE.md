@@ -79,6 +79,51 @@ bare acronym in code:
   identity/discovery. `altius-protocol::anp` carries description/discovery
   stubs; `did:wba` verification is future work.
 
+### 2.1 BeeACP wire protocol (fleet serve)
+
+Machine-readable contract: **OpenAPI 3.1** at `GET /openapi.json` (public,
+no auth). Probes: `GET /health`, `GET /ready`.
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/runs` | `GET` | List runs (newest first) |
+| `/runs` | `POST` | Create run (`agent_name`, `input[]`) → `202`, status `in-progress` |
+| `/runs/{id}` | `GET` | Run snapshot; includes `approval` when `awaiting` |
+| `/runs/{id}` | `POST` | Resume awaiting run (`message?`, `decision?`) → `202` |
+| `/runs/{id}/cancel` | `POST` | Cancel non-terminal run |
+| `/runs/{id}/events` | `GET` | SSE: `event: run` + JSON [`Run`] body on change |
+
+**Auth:** when `--token` / `ALTIUS_FLEET_TOKEN` is set, all `/runs*` routes
+require `Authorization: Bearer <token>`. SSE clients without header support
+may pass `?token=` on `/runs/{id}/events` only.
+
+**Lifecycle:** strict transitions per `RunStatus::can_transition_to` (see
+`altius-protocol::beeacp::model`). Human-in-the-loop pauses set
+`status = awaiting` and attach a typed **`approval`** object on the run
+snapshot (not a session/message bus):
+
+```json
+{
+  "summary": "human-readable headline",
+  "reason": "optional longer text",
+  "node": "graph node that interrupted",
+  "kind": "generic | transaction",
+  "transaction": {
+    "action_summary": "Transfer 500000000 lamports",
+    "lamport_deltas": [{ "account": "…", "delta_lamports": "-500000000" }],
+    "invoked_programs": ["11111111111111111111111111111111"]
+  }
+}
+```
+
+Resume with `POST /runs/{id}` and `{ "decision": { "approved": true, "note": "…" } }`
+and/or a `message`. `{ "approved": false }` cancels the run. PWA client:
+`assets/pwa/beeacp-client.js` (hand-typed, zero build).
+
+**Intentionally absent** (generalist agent SDK scope): sessions, message
+history, fork/revert/todo, `prompt_async`, TUI bridge, structured-output
+`json_schema`.
+
 One more disambiguation: `altius-ontology` is about OWL/RDF-style *domain
 schemas* (SVM security concepts), not the Ontology blockchain. Ontology-chain
 WASM CDT tooling would live as an optional specialist on `altius-wasm-agents`.
@@ -166,12 +211,13 @@ and awaiting-approval resume.
 
 - **Per-run state:** `altius-graph` checkpoints typed state after each node
   (`Checkpointer`), through the `MemoryStore` trait (in-memory default;
+  `SqliteMemoryStore` for fleet serve — same SQLite file as BeeAI runs;
   `Neo4jMemoryStore` behind feature `neo4j` persists
   `(:Run)-[:HAS_CHECKPOINT]->(:Checkpoint)` and `(:KvEntry)` scratch
-  values with base64 payloads). **`altius fleet serve` today uses
-  `InMemoryCheckpointer` only** — checkpoints survive HITL resume within one
-  process but not across restarts; see
-  [`SECURITY_THREAT_MODEL.md`](../SECURITY_THREAT_MODEL.md) (Remote fleet).
+  values with base64 payloads). **`altius fleet serve` uses
+  `MemoryStoreCheckpointer` + `SqliteMemoryStore`** — checkpoints and the
+  BeeAI-run → graph-run id map survive HITL resume across process restarts;
+  full re-run remains the fallback when no checkpoint exists.
 - **Cross-session knowledge:** `altius-memory` persists `Run`, `Step`,
   `Artifact`, `Contract`, `Vulnerability`, `Skill` nodes with `EXECUTED`,
   `HAS_STEP`, `PRODUCED`, `CALLED`, `DEPLOYED`, `PAID`,
@@ -226,9 +272,6 @@ simulation-to-sign drift, blockhash-expiry, and replay limitations.
   enabled (no third-party leaked prompts, ever).
 - Optional Neo4j-backed `RunStore` (SQLite is the durable default today);
   push notifications beyond SSE.
-- **Durable graph checkpoints for fleet serve:** wire `MemoryStoreCheckpointer`
-  (Neo4j today, or a future SQLite/file `MemoryStore`) so HITL resume survives
-  process restart; restore BeeAI-run → graph-run id mapping on startup.
 
 ### Done in this layer (no longer stubs)
 
@@ -237,6 +280,7 @@ simulation-to-sign drift, blockhash-expiry, and replay limitations.
 - `@Browser` dispatch: `FleetRoute::Browser` + browser specialist node +
   prefix-allowlisted MCP tools (`browser_*`).
 - PWA thin client at `/app/` (chat / run list / approval card).
+- `SqliteMemoryStore` for checkpoints + kv (fleet serve default; same `runs.db`).
 - `Neo4jMemoryStore` Cypher for checkpoints + kv (feature `neo4j`).
 - `McpOntologyClient` for external OWL/RDF ontology MCP servers
   (feature `mcp`), with bounded untrusted-response decoding.
@@ -244,9 +288,9 @@ simulation-to-sign drift, blockhash-expiry, and replay limitations.
   `wasmtime`); guest ABI `memory` + `alloc` + `run`, no host imports.
 - Harness Phase A: sandboxed FS/`run_command` tools, Pre/PostToolUse hooks,
   FailClosed `[tools]` permissions, `.altius.md` project memory.
-- Remote fleet (P0): SQLite `RunStore`, bearer/`?token=` auth, async
-  `POST /runs` + `GET /runs/{id}/events` SSE, in-process checkpoint
-  awaiting→resume HITL (full re-run fallback after restart).
+- Remote fleet (P0): SQLite `RunStore` + checkpoint store, bearer/`?token=` auth, async
+  `POST /runs` + `GET /runs/{id}/events` SSE, durable checkpoint
+  awaiting→resume HITL (full re-run fallback when checkpoint missing).
 - Slash skills v0: `/scan`, `/audit`, `/browser`, `/pay` force routes in
   CLI, BeeACP, and PWA.
 - Plugin pack v0: JSON manifest (`examples/plugins/web3-starter.json`)

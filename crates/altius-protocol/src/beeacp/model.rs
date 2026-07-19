@@ -1,6 +1,7 @@
 use altius_core::RunId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::error::Result;
 use crate::limits;
@@ -9,7 +10,7 @@ use crate::limits;
 ///
 /// Wire format uses the protocol's kebab-case names
 /// (`created`, `in-progress`, `awaiting`, `completed`, `failed`, `cancelled`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunStatus {
     Created,
@@ -64,8 +65,82 @@ impl RunStatus {
     }
 }
 
+/// Coarse approval kind surfaced when a run enters `awaiting`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApprovalKind {
+    /// Generic human-in-the-loop pause (tool, policy, graph interrupt).
+    Generic,
+    /// On-chain action preview (TxGuard / DiffReport semantics).
+    Transaction,
+}
+
+/// Lamport balance change for one account in a transaction preview.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LamportDelta {
+    pub account: String,
+    /// Signed lamport delta as a decimal string (JSON-safe).
+    pub delta_lamports: String,
+}
+
+/// Structured transaction preview (DiffReport-shaped, wire-safe).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct TransactionPreview {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lamport_deltas: Vec<LamportDelta>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invoked_programs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compute_units_consumed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compute_unit_limit: Option<u64>,
+}
+
+/// Typed approval payload attached to a run while `status == awaiting`.
+///
+/// Emitted on the run snapshot (`GET /runs/{id}`) and in SSE `event: run`
+/// frames when the run pauses for human approval.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RunApproval {
+    /// Human-readable headline for the approval card.
+    pub summary: String,
+    /// Longer explanation when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Graph node that raised the interrupt, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    pub kind: ApprovalKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transaction: Option<TransactionPreview>,
+}
+
+impl RunApproval {
+    /// Generic HITL approval from an interrupt reason (no transaction preview).
+    pub fn generic(summary: impl Into<String>, node: Option<String>) -> Self {
+        let summary = summary.into();
+        Self {
+            reason: Some(summary.clone()),
+            summary,
+            node,
+            kind: ApprovalKind::Generic,
+            transaction: None,
+        }
+    }
+}
+
+/// Caller response when resuming an `awaiting` run.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ApprovalDecision {
+    pub approved: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 /// One typed content part of a [`Message`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct MessagePart {
     /// MIME type of the content (e.g. `text/plain`, `application/json`).
     pub content_type: String,
@@ -88,7 +163,7 @@ impl MessagePart {
 }
 
 /// A message exchanged with an agent as run input or output.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct Message {
     /// Originating role (e.g. `user`, `agent`).
     pub role: String,
@@ -114,9 +189,33 @@ impl Message {
     }
 }
 
+/// Standard protocol error envelope returned by BeeACP handlers.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct ProtocolErrorBody {
+    pub error: ProtocolErrorDetail,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct ProtocolErrorDetail {
+    pub code: String,
+    pub message: String,
+}
+
+/// Probe responses (also documented in OpenAPI).
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct HealthResponse {
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct ReadyResponse {
+    pub status: String,
+}
+
 /// A single run of an agent: the unit of the BeeAI ACP lifecycle.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct Run {
+    #[schema(value_type = String, example = "550e8400-e29b-41d4-a716-446655440000")]
     pub run_id: RunId,
     /// Name of the agent this run targets.
     pub agent_name: String,
@@ -128,6 +227,9 @@ pub struct Run {
     /// Human-readable failure reason when `status == failed`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Structured approval payload when `status == awaiting`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval: Option<RunApproval>,
     pub created_at: DateTime<Utc>,
     /// Set when the run enters a terminal state.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,6 +246,7 @@ impl Run {
             input,
             output: Vec::new(),
             error: None,
+            approval: None,
             created_at: Utc::now(),
             finished_at: None,
         }

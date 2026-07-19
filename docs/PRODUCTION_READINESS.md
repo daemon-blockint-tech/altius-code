@@ -11,17 +11,20 @@ positioning and moat priorities, see [MOAT strategy](MOAT_STRATEGY.md).
 | **Formatting / lint / tests** | Green | `cargo fmt --check`, `cargo clippy --locked -D warnings`, `cargo test --locked` |
 | **Fleet auth** | Done | Non-loopback bind fails closed without bearer token |
 | **BeeAI run persistence** | Done | SQLite `RunStore` (`~/.altius/runs.db` or `--run-db`) |
-| **HITL resume (same process)** | Done | `InMemoryCheckpointer` + graph resume from interrupted node |
+| **Graph checkpoint persistence** | Done | `SqliteMemoryStore` + `MemoryStoreCheckpointer` (same `runs.db`); BeeAI→graph run id in kv table |
+| **HITL resume** | Done | Graph resume from interrupted node; survives process restart when checkpoint exists; full re-run fallback otherwise |
 | **TxGuard choke point** | Done | Policy → simulate → diff → approve → audit → signer UDS |
 | **Signer isolation** | Done | Keys in `altius-signerd`; socket `0600`, keypair mode checks |
 | **Secret redaction** | Done | `altius_core::redact_secrets` before persistence |
 | **Protocol bounds** | Done | Size/depth limits on HTTP/JSON inputs |
-| **PWA thin client** | Done | `/app/` chat, run list, approval card |
+| **PWA thin client** | Done | `/app/` chat, run list, approval card (typed `beeacp-client.js`) |
+| **BeeACP OpenAPI** | Done | OpenAPI 3.1 at `/openapi.json`; utoipa from `altius-protocol::beeacp` |
+| **HITL approval wire** | Done | `awaiting` runs carry typed `approval` on snapshots + SSE `event: run` |
 | **SARIF scan gate** | Done | GitHub Actions `scan` job on clean fixture |
 | **A2A execution** | Done | Real fleet supervisor path (not echo placeholder) |
 | **Remote ops bounds** | Done | Fleet concurrency limits + LLM network timeouts |
 | **PWA credentials** | Done | Safer token storage/URL cleanup + CSP headers |
-| **Owner-only secrets** | Done | Signer socket/keypair + SQLite run DB permissions |
+| **Owner-only secrets** | Done | Signer socket/keypair + SQLite run/checkpoint DB permissions |
 | **Threat model** | Done | [`SECURITY_THREAT_MODEL.md`](SECURITY_THREAT_MODEL.md) |
 | **Fleet architecture** | Done | [`specs/FLEET_ARCHITECTURE.md`](specs/FLEET_ARCHITECTURE.md) |
 
@@ -29,8 +32,6 @@ positioning and moat priorities, see [MOAT strategy](MOAT_STRATEGY.md).
 
 | Limitation | Restart / ops behavior |
 |------------|------------------------|
-| **Graph checkpoints in-memory** | After `fleet serve` restart, `awaiting` runs resume via full supervisor re-run, not exact graph replay. Durable path exists only as `Neo4jMemoryStore` (feature `neo4j`). |
-| **BeeAI run → graph run map in-memory** | Lost on restart; contributes to re-run fallback above. |
 | **ANP / did:wba** | Discovery stub; no full verification. |
 | **WASM host imports** | No `fs_read` / network imports yet. |
 

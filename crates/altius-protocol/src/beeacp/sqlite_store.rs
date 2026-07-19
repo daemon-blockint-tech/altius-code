@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use tokio::sync::Mutex;
 
-use super::model::{Message, Run, RunStatus};
+use super::model::{Message, Run, RunApproval, RunStatus};
 use super::store::RunStore;
 use crate::error::{ProtocolError, Result};
 
@@ -79,10 +79,28 @@ impl SqliteRunStore {
             );",
         )
         .map_err(internal)?;
+        ensure_approval_column(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
     }
+}
+
+fn ensure_approval_column(conn: &Connection) -> Result<()> {
+    let has_column = conn
+        .prepare("PRAGMA table_info(runs)")
+        .map_err(internal)?
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(internal)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(internal)?
+        .into_iter()
+        .any(|name| name == "approval_json");
+    if !has_column {
+        conn.execute("ALTER TABLE runs ADD COLUMN approval_json TEXT", [])
+            .map_err(internal)?;
+    }
+    Ok(())
 }
 
 fn internal(error: rusqlite::Error) -> ProtocolError {
@@ -112,6 +130,7 @@ type StoredRunRow = (
     String,
     String,
     Option<String>,
+    Option<String>,
     String,
     Option<String>,
 );
@@ -126,12 +145,29 @@ fn run_from_row(row: &Row<'_>) -> rusqlite::Result<StoredRunRow> {
         row.get(5)?,
         row.get(6)?,
         row.get(7)?,
+        row.get(8)?,
     ))
 }
 
 fn decode_run(
-    (run_id, agent_name, status, input_json, output_json, error, created_at, finished_at): StoredRunRow,
+    (
+        run_id,
+        agent_name,
+        status,
+        input_json,
+        output_json,
+        error,
+        approval_json,
+        created_at,
+        finished_at,
+    ): StoredRunRow,
 ) -> Result<Run> {
+    let approval = match approval_json {
+        Some(raw) => Some(serde_json::from_str(&raw).map_err(|e| {
+            ProtocolError::Internal(format!("corrupt approval json in db: {e}"))
+        })?),
+        None => None,
+    };
     Ok(Run {
         run_id: run_id
             .parse()
@@ -141,6 +177,7 @@ fn decode_run(
         input: messages_from_json(&input_json)?,
         output: messages_from_json(&output_json)?,
         error,
+        approval,
         created_at: datetime_from_rfc3339(&created_at)?,
         finished_at: finished_at
             .as_deref()
@@ -149,8 +186,7 @@ fn decode_run(
     })
 }
 
-const SELECT_COLUMNS: &str =
-    "run_id, agent_name, status, input_json, output_json, error, created_at, finished_at";
+const SELECT_COLUMNS: &str = "run_id, agent_name, status, input_json, output_json, error, approval_json, created_at, finished_at";
 
 fn get_run(conn: &Connection, run_id: RunId) -> Result<Run> {
     let row = conn
@@ -176,8 +212,8 @@ impl RunStore for SqliteRunStore {
         let inserted = conn
             .execute(
                 "INSERT OR IGNORE INTO runs
-                 (run_id, agent_name, status, input_json, output_json, error, created_at, finished_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 (run_id, agent_name, status, input_json, output_json, error, approval_json, created_at, finished_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     run.run_id.to_string(),
                     run.agent_name,
@@ -185,6 +221,8 @@ impl RunStore for SqliteRunStore {
                     input_json,
                     output_json,
                     run.error,
+                    run.approval.as_ref().map(serde_json::to_string).transpose()
+                        .map_err(|e| ProtocolError::Internal(format!("serialize approval: {e}")))?,
                     run.created_at.to_rfc3339(),
                     run.finished_at.map(|t| t.to_rfc3339()),
                 ],
@@ -225,6 +263,7 @@ impl RunStore for SqliteRunStore {
         next: RunStatus,
         output: Option<Vec<Message>>,
         error: Option<String>,
+        approval: Option<RunApproval>,
     ) -> Result<Run> {
         // The mutex serializes read-check-write, so the transition table is
         // enforced atomically per store instance.
@@ -243,19 +282,33 @@ impl RunStore for SqliteRunStore {
         if let Some(error) = error {
             run.error = Some(error);
         }
+        if next == RunStatus::Awaiting {
+            if let Some(approval) = approval {
+                run.approval = Some(approval);
+            }
+        } else {
+            run.approval = None;
+        }
         if next.is_terminal() {
             run.finished_at = Some(Utc::now());
         }
         let output_json = serde_json::to_string(&run.output)
             .map_err(|e| ProtocolError::Internal(format!("serialize output: {e}")))?;
+        let approval_json = run
+            .approval
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| ProtocolError::Internal(format!("serialize approval: {e}")))?;
         conn.execute(
-            "UPDATE runs SET status = ?2, output_json = ?3, error = ?4, finished_at = ?5
+            "UPDATE runs SET status = ?2, output_json = ?3, error = ?4, approval_json = ?5, finished_at = ?6
              WHERE run_id = ?1",
             params![
                 run.run_id.to_string(),
                 run.status.as_str(),
                 output_json,
                 run.error,
+                approval_json,
                 run.finished_at.map(|t| t.to_rfc3339()),
             ],
         )
@@ -321,13 +374,13 @@ mod tests {
 
         // created → completed is forbidden.
         let err = store
-            .transition(id, RunStatus::Completed, None, None)
+            .transition(id, RunStatus::Completed, None, None, None)
             .await
             .unwrap_err();
         assert!(matches!(err, ProtocolError::InvalidTransition { .. }));
 
         store
-            .transition(id, RunStatus::InProgress, None, None)
+            .transition(id, RunStatus::InProgress, None, None, None)
             .await
             .unwrap();
         let done = store
@@ -335,6 +388,7 @@ mod tests {
                 id,
                 RunStatus::Completed,
                 Some(vec![Message::user_text("done")]),
+                None,
                 None,
             )
             .await
@@ -350,7 +404,7 @@ mod tests {
 
         // Terminal states are frozen.
         assert!(store
-            .transition(id, RunStatus::InProgress, None, None)
+            .transition(id, RunStatus::InProgress, None, None, None)
             .await
             .is_err());
     }
@@ -381,7 +435,7 @@ mod tests {
             let store = SqliteRunStore::open(&path).unwrap();
             store.create(run).await.unwrap();
             store
-                .transition(id, RunStatus::InProgress, None, None)
+                .transition(id, RunStatus::InProgress, None, None, None)
                 .await
                 .unwrap();
         }

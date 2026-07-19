@@ -9,7 +9,10 @@ use altius_agents::{
     OfflineLlmClient, OpenAiCompatibleClient, SupervisorOptions, SupervisorOutcome,
 };
 use altius_core::{Budget, RunId};
-use altius_graph::{Checkpointer, ExecutionOutcome, GraphExecutor, InMemoryCheckpointer};
+use altius_graph::{
+    Checkpointer, ExecutionOutcome, GraphExecutor, InMemoryCheckpointer, MemoryStoreCheckpointer,
+    SqliteMemoryStore,
+};
 use altius_mcp::{McpAttachConfig, McpAttachments};
 use altius_protocol::a2a::{
     A2aMessage, A2aState, AgentCapabilities, AgentCard, AgentSkill, Part, Task, TaskHandler,
@@ -19,8 +22,8 @@ use altius_protocol::anp::{
     AgentDescription, AgentRegistry, AnpState, InMemoryRegistry, InterfaceDescription,
 };
 use altius_protocol::beeacp::{
-    require_bearer, BearerAuth, BeeAcpState, Message, MessagePart, Run, RunExecutor, RunOutcome,
-    SqliteRunStore,
+    require_bearer, BearerAuth, BeeAcpState, Message, MessagePart, Run, RunApproval, RunExecutor,
+    RunOutcome, SqliteRunStore, openapi_router,
 };
 use altius_protocol::Result as ProtocolResult;
 use async_trait::async_trait;
@@ -79,30 +82,32 @@ async fn ready_handler(
 }
 
 fn health_routes(store: Option<Arc<dyn altius_protocol::beeacp::RunStore>>) -> Router {
-    Router::new()
+    let probes = Router::new()
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
-        .with_state(FleetHealthState { store })
+        .with_state(FleetHealthState { store });
+    Router::new().merge(openapi_router()).merge(probes)
 }
 
 /// Bridges the BeeAI ACP run lifecycle onto the fleet supervisor.
 ///
 /// A supervisor HITL interrupt maps to `RunOutcome::Awaiting`, pausing the
-/// BeeAI run. Graph checkpoints are held in a process-lifetime
-/// [`InMemoryCheckpointer`] shared across execute/resume, with a map from
-/// BeeAI run id to graph run id: `resume` re-enters the interrupted node
-/// from its latest checkpoint (with the human reply appended to the state
-/// prompt). BeeAI ACP runs themselves persist in SQLite, but graph
-/// checkpoints are in-memory for this slice, so after a process restart —
-/// or if no checkpoint exists — `resume` falls back to a full re-run with
-/// the resume message appended to the original prompt.
+/// BeeAI run. When a run database path is configured, graph checkpoints and
+/// the BeeAI-run → graph-run id map persist in SQLite via
+/// [`MemoryStoreCheckpointer`] + [`SqliteMemoryStore`] (same file as
+/// [`SqliteRunStore`]). `resume` re-enters the interrupted node from its
+/// latest checkpoint (with the human reply appended to the state prompt).
+/// Without a durable store, checkpoints and the id map are process-lifetime
+/// only; resume falls back to a full re-run when no checkpoint is found.
 struct FleetRunExecutor {
     offline: bool,
     options_template: SupervisorOptions,
-    checkpointer: Arc<InMemoryCheckpointer<FleetState>>,
-    run_slots: Arc<Semaphore>,
-    /// BeeAI ACP run id → graph run id, for checkpoint lookups on resume.
+    checkpointer: Arc<dyn Checkpointer<FleetState>>,
+    /// Durable checkpoint + BeeAI→graph run mapping. `None` uses in-memory fallback.
+    memory_store: Option<Arc<SqliteMemoryStore>>,
+    /// Process-lifetime BeeAI → graph run map when `memory_store` is absent.
     graph_runs: Arc<RwLock<HashMap<RunId, RunId>>>,
+    run_slots: Arc<Semaphore>,
 }
 
 struct FleetA2aHandler {
@@ -186,13 +191,41 @@ impl TaskHandler for FleetA2aHandler {
 }
 
 impl FleetRunExecutor {
-    fn new(offline: bool, options_template: SupervisorOptions) -> Self {
+    /// Durable checkpoints and BeeAI→graph run mapping via SQLite (fleet serve default).
+    fn with_durable_store(
+        offline: bool,
+        options_template: SupervisorOptions,
+        memory_store: SqliteMemoryStore,
+    ) -> Self {
+        let memory_store = Arc::new(memory_store);
+        let checkpointer: Arc<dyn Checkpointer<FleetState>> =
+            Arc::new(MemoryStoreCheckpointer::new((*memory_store).clone()));
         Self {
             offline,
             options_template,
-            checkpointer: Arc::new(InMemoryCheckpointer::new()),
-            run_slots: Arc::new(Semaphore::new(4)),
+            checkpointer,
+            memory_store: Some(memory_store),
             graph_runs: Arc::new(RwLock::new(HashMap::new())),
+            run_slots: Arc::new(Semaphore::new(4)),
+        }
+    }
+
+    async fn record_graph_run(&self, bee_run_id: RunId, graph_run_id: RunId) {
+        if let Some(store) = &self.memory_store {
+            let _ = store.put_bee_graph_run(bee_run_id, graph_run_id).await;
+        } else {
+            self.graph_runs
+                .write()
+                .await
+                .insert(bee_run_id, graph_run_id);
+        }
+    }
+
+    async fn graph_run_for_bee(&self, bee_run_id: RunId) -> Option<RunId> {
+        if let Some(store) = &self.memory_store {
+            store.get_bee_graph_run(bee_run_id).await.ok().flatten()
+        } else {
+            self.graph_runs.read().await.get(&bee_run_id).copied()
         }
     }
 
@@ -205,8 +238,7 @@ impl FleetRunExecutor {
         options: SupervisorOptions,
     ) -> ProtocolResult<RunOutcome> {
         let llm = llm_client(self.offline)?;
-        let checkpointer: Arc<dyn Checkpointer<FleetState>> =
-            Arc::clone(&self.checkpointer) as Arc<dyn Checkpointer<FleetState>>;
+        let checkpointer: Arc<dyn Checkpointer<FleetState>> = Arc::clone(&self.checkpointer);
         match run_supervisor_outcome_with_options(
             llm,
             checkpointer,
@@ -217,10 +249,7 @@ impl FleetRunExecutor {
         .await
         {
             Ok((graph_run_id, outcome)) => {
-                self.graph_runs
-                    .write()
-                    .await
-                    .insert(bee_run_id, graph_run_id);
+                self.record_graph_run(bee_run_id, graph_run_id).await;
                 Ok(supervisor_outcome_to_run_outcome(outcome))
             }
             Err(error) => Ok(RunOutcome::Failed(error.to_string())),
@@ -234,12 +263,11 @@ impl FleetRunExecutor {
         run: &Run,
         message: Option<&Message>,
     ) -> ProtocolResult<Option<RunOutcome>> {
-        let graph_run_id = self.graph_runs.read().await.get(&run.run_id).copied();
+        let graph_run_id = self.graph_run_for_bee(run.run_id).await;
         let Some(graph_run_id) = graph_run_id else {
             return Ok(None);
         };
-        let checkpointer: Arc<dyn Checkpointer<FleetState>> =
-            Arc::clone(&self.checkpointer) as Arc<dyn Checkpointer<FleetState>>;
+        let checkpointer: Arc<dyn Checkpointer<FleetState>> = Arc::clone(&self.checkpointer);
         let Ok(Some(checkpoint)) = checkpointer.latest(&graph_run_id).await else {
             return Ok(None);
         };
@@ -266,7 +294,9 @@ impl FleetRunExecutor {
             .await
         {
             Ok(ExecutionOutcome::Finished { state, .. }) => Ok(Some(completed_outcome(state))),
-            Ok(ExecutionOutcome::Interrupted { .. }) => Ok(Some(RunOutcome::Awaiting)),
+            Ok(ExecutionOutcome::Interrupted { reason, node, .. }) => Ok(Some(RunOutcome::Awaiting {
+                approval: RunApproval::generic(reason, Some(node)),
+            })),
             Err(error) => Ok(Some(RunOutcome::Failed(error.to_string()))),
         }
     }
@@ -344,7 +374,9 @@ fn supervisor_outcome_to_run_outcome(outcome: SupervisorOutcome) -> RunOutcome {
     match outcome {
         SupervisorOutcome::Finished(state) => completed_outcome(state),
         // Graph `Interrupted` surfaces as awaiting, never as a failure.
-        SupervisorOutcome::Awaiting { .. } => RunOutcome::Awaiting,
+        SupervisorOutcome::Awaiting { reason, node, .. } => RunOutcome::Awaiting {
+            approval: RunApproval::generic(reason, Some(node)),
+        },
     }
 }
 
@@ -628,11 +660,21 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
             let store = SqliteRunStore::open(&run_db_path).map_err(|error| {
                 CliError::message(format!("open run db `{}`: {error}", run_db_path.display()))
             })?;
+            let memory_store = SqliteMemoryStore::open(&run_db_path).map_err(|error| {
+                CliError::message(format!(
+                    "open checkpoint db `{}`: {error}",
+                    run_db_path.display()
+                ))
+            })?;
             let store: Arc<dyn altius_protocol::beeacp::RunStore> = Arc::new(store);
             let bee = altius_protocol::beeacp::router(
                 BeeAcpState::new(
                     Arc::clone(&store),
-                    Arc::new(FleetRunExecutor::new(offline, options_template)),
+                    Arc::new(FleetRunExecutor::with_durable_store(
+                        offline,
+                        options_template,
+                        memory_store,
+                    )),
                 )
                 .with_auth_token(auth_token.clone()),
             );
@@ -661,6 +703,7 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
             .map_err(|error| CliError::message(error.to_string()))?;
         eprintln!("altius: listening on http://{bind}");
         eprintln!("altius: health at http://{bind}/health (ready at /ready)");
+        eprintln!("altius: OpenAPI 3.1 at http://{bind}/openapi.json");
         if include_beeacp {
             eprintln!("altius: BeeAI ACP runs at /runs (SSE at /runs/{{id}}/events)");
             eprintln!("altius: run db at {}", run_db_path.display());
@@ -740,5 +783,53 @@ mod tests {
             .unwrap();
 
         assert_eq!(task.status.state, TaskState::Rejected);
+    }
+
+    #[tokio::test]
+    async fn durable_graph_run_mapping_survives_store_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("runs.db");
+        let bee = RunId::new();
+        let graph = RunId::new();
+        {
+            let store = SqliteMemoryStore::open(&path).unwrap();
+            let exec =
+                FleetRunExecutor::with_durable_store(true, SupervisorOptions::default(), store);
+            exec.record_graph_run(bee, graph).await;
+        }
+        let store = SqliteMemoryStore::open(&path).unwrap();
+        let exec = FleetRunExecutor::with_durable_store(true, SupervisorOptions::default(), store);
+        assert_eq!(exec.graph_run_for_bee(bee).await, Some(graph));
+    }
+
+    #[tokio::test]
+    async fn durable_checkpoint_survives_store_reopen_for_resume_lookup() {
+        use altius_core::StepId;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("runs.db");
+        let bee = RunId::new();
+        let graph = RunId::new();
+        let step = StepId::new();
+        let state = FleetState::new("approve this change");
+        {
+            let store = SqliteMemoryStore::open(&path).unwrap();
+            let checkpointer = MemoryStoreCheckpointer::<FleetState, _>::new(store.clone());
+            Checkpointer::put(&checkpointer, &graph, &step, "approve", &state)
+                .await
+                .unwrap();
+            store.put_bee_graph_run(bee, graph).await.unwrap();
+        }
+        let store = SqliteMemoryStore::open(&path).unwrap();
+        let exec = FleetRunExecutor::with_durable_store(true, SupervisorOptions::default(), store);
+        let graph_run_id = exec.graph_run_for_bee(bee).await.unwrap();
+        let latest = exec
+            .checkpointer
+            .latest(&graph_run_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest.node, "approve");
+        assert_eq!(latest.state.prompt, state.prompt);
     }
 }

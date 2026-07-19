@@ -9,7 +9,11 @@ description = "Altius Model Context Protocol host and external MCP client"
 [features]
 default = []
 # Generic MCP client attach (browser, ontology, …).
-mcp-client = ["rmcp/client", "rmcp/transport-child-process"]
+mcp-client = [
+    "rmcp/client",
+    "rmcp/transport-child-process",
+    "rmcp/transport-streamable-http-client-reqwest",
+]
 # Backward-compatible alias that also exposes the agent-lsp shim.
 agent-lsp = ["mcp-client"]
 

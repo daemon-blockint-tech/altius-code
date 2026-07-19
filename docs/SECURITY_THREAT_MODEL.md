@@ -114,17 +114,16 @@ never commit tokens to the repository.
 - **Probes:** `GET /health` and `GET /ready` stay unauthenticated so load
   balancers and orchestrators can check liveness without exposing run APIs.
 
-**Graph checkpoint durability (known limitation):** BeeAI ACP runs persist in
-SQLite (`SqliteRunStore`, default `~/.altius/runs.db`), but supervisor graph
-checkpoints in `altius fleet serve` are held in a process-lifetime
-`InMemoryCheckpointer` (`serve_command.rs`). HITL `awaiting` → `resume` works
-within a single process; after restart, the BeeAI run row may still show
-`awaiting`, but resume falls back to a full supervisor re-run with the resume
-message appended (no node-level checkpoint restore). Durable checkpoint storage
-exists only via `MemoryStoreCheckpointer` + `Neo4jMemoryStore` (feature
-`neo4j`, external Neo4j); there is no SQLite/file checkpoint adapter today.
-Operators should treat restart during `awaiting` as best-effort recovery, not
-exact graph replay.
+**Graph checkpoint durability:** BeeAI ACP runs and supervisor graph
+checkpoints persist in SQLite (`SqliteRunStore` + `SqliteMemoryStore`, default
+`~/.altius/runs.db` or `--run-db`). `altius fleet serve` wires
+`MemoryStoreCheckpointer` so HITL `awaiting` → `resume` re-enters the
+interrupted node from the latest checkpoint, including after process restart.
+The BeeAI-run → graph-run id map is stored in the same database (kv namespace
+`beeacp_graph_runs`). If no checkpoint or mapping exists (corrupt db, pre-upgrade
+row), resume falls back to a full supervisor re-run with the resume message
+appended. Neo4j-backed checkpoints remain available via feature `neo4j` for
+operators who prefer a graph database.
 
 The TxGuard audit log is hash-chained and detects modification during explicit
 verification. It is not an append-only remote ledger: a local attacker able to
