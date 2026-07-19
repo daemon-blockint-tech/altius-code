@@ -22,8 +22,8 @@ use altius_protocol::anp::{
     AgentDescription, AgentRegistry, AnpState, InMemoryRegistry, InterfaceDescription,
 };
 use altius_protocol::beeacp::{
-    require_bearer, BearerAuth, BeeAcpState, Message, MessagePart, Run, RunApproval, RunExecutor,
-    RunOutcome, SqliteRunStore, openapi_router,
+    openapi_router, require_bearer, BearerAuth, BeeAcpState, Message, MessagePart, Run,
+    RunApproval, RunExecutor, RunOutcome, SqliteRunStore,
 };
 use altius_protocol::Result as ProtocolResult;
 use async_trait::async_trait;
@@ -294,9 +294,11 @@ impl FleetRunExecutor {
             .await
         {
             Ok(ExecutionOutcome::Finished { state, .. }) => Ok(Some(completed_outcome(state))),
-            Ok(ExecutionOutcome::Interrupted { reason, node, .. }) => Ok(Some(RunOutcome::Awaiting {
-                approval: RunApproval::generic(reason, Some(node)),
-            })),
+            Ok(ExecutionOutcome::Interrupted { reason, node, .. }) => {
+                Ok(Some(RunOutcome::Awaiting {
+                    approval: RunApproval::generic(reason, Some(node)),
+                }))
+            }
             Err(error) => Ok(Some(RunOutcome::Failed(error.to_string()))),
         }
     }
@@ -384,6 +386,7 @@ fn options_for_run(template: &SupervisorOptions, agent_name: &str) -> Supervisor
     SupervisorOptions {
         agent_name: Some(agent_name.to_owned()),
         browser: template.browser.clone(),
+        github: template.github.clone(),
         hooks: template.hooks.clone(),
     }
 }
@@ -554,10 +557,20 @@ async fn build_supervisor_options(
         }
     }
     let browser_enabled = browser_tooling.is_some();
+
+    let github_tooling = match crate::github_connector::attach(&args.github, &attachments).await {
+        Ok(tooling) => tooling,
+        Err(error) => {
+            eprintln!("altius: warning: GitHub MCP attach failed: {error}");
+            None
+        }
+    };
+
     Ok((
         SupervisorOptions {
             agent_name: None,
             browser: browser_tooling,
+            github: github_tooling,
             hooks: Vec::new(),
         },
         browser_enabled,
@@ -612,6 +625,7 @@ fn serve_protocols(args: &FleetServeArgs, include_beeacp: bool) -> Result<(), Cl
         token: args.token.clone(),
         run_db: args.run_db.clone(),
         plugin: args.plugin.clone(),
+        github: args.github.clone(),
     };
 
     rt.block_on(async move {
