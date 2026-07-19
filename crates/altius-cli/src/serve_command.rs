@@ -575,9 +575,16 @@ async fn build_supervisor_options(
         }
     }
     let browser_enabled = browser_tooling.is_some();
-    let github_tooling =
-        crate::github_connector::attach(&args.github, attachments.as_ref()).await?;
+
+    let github_tooling = match crate::github_connector::attach(&args.github, &attachments).await {
+        Ok(tooling) => tooling,
+        Err(error) => {
+            eprintln!("altius: warning: GitHub MCP attach failed: {error}");
+            None
+        }
+    };
     let github_enabled = github_tooling.is_some();
+
     Ok((
         SupervisorOptions {
             agent_name: None,

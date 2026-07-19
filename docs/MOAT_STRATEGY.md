@@ -4,6 +4,27 @@ Dokumen ini menyusun langkah-langkah membangun *moat* (parit kompetitif) Altius
 Code terhadap enam kompetitor utama di ruang AI coding agent. Data kompetitor
 diambil dari halaman GitHub masing-masing per 18 Juli 2026.
 
+## 0. Keputusan Fokus: Solana Only (19 Juli 2026)
+
+**Moat vertikal Altius Code fokus penuh ke Solana/SVM — bukan multi-chain.**
+Ini keputusan eksplisit, bukan default yang belum dipikirkan:
+
+- Setiap penyebutan "blockchain/web3" generik di dokumen ini dan turunannya
+  (`MOAT_RESEARCH_ADDENDUM.md`) berarti **Solana**, kecuali disebut lain secara
+  eksplisit sebagai catatan riset prior-art.
+- Toolchain yang jadi prioritas kelas satu: **Anchor, Pinocchio, dan Rust
+  native (`cargo build-sbf`)** — tiga framework yang sudah didukung nyata di
+  `altius-svm-detect`/`altius-svm-tools`. Foundry/Hardhat (EVM), Move
+  (Aptos/Sui), dan CosmWasm **bukan** target — disebutkan di draf awal
+  dokumen ini sebagai contoh pola vertikal, bukan roadmap yang disetujui.
+- **Alasan:** kedalaman mengalahkan lebar (lihat §1 & Langkah 1 di bawah).
+  Repo saat ini sudah punya `altius-scanners` dengan heuristik untuk EVM,
+  Cairo, Cosmos, Algorand, dan TON selain SVM — itu tetap boleh ada sebagai
+  kapabilitas sekunder/eksperimental, **tapi tidak lagi diinvestasikan** dan
+  tidak masuk hitungan metrik moat (§4). Semua penambahan fitur, benchmark,
+  dan dokumentasi baru berikutnya mengasumsikan Solana sebagai satu-satunya
+  chain utama sampai keputusan ini direvisi secara eksplisit.
+
 ## 1. Peta Kompetitor
 
 | Kompetitor | Posisi | Lisensi | Popularitas | Kekuatan utama |
@@ -25,18 +46,21 @@ positioning Altius Code.
 
 ## 2. Langkah Moat (Berurutan Berdasarkan Prioritas)
 
-### Langkah 1 — Moat Vertikal: jadi agent #1 untuk pengembangan blockchain
+### Langkah 1 — Moat Vertikal: jadi agent #1 untuk pengembangan Solana
 
-Jangan bersaing sebagai "coding agent yang juga bisa web3", tapi sebagai
-"agent web3 yang kebetulan juga coding agent lengkap".
+Jangan bersaing sebagai "coding agent yang juga bisa Solana", tapi sebagai
+"agent Solana yang kebetulan juga coding agent lengkap".
 
-- Dukungan kelas satu untuk toolchain web3: Foundry, Hardhat, Anchor (Solana),
-  Move (Aptos/Sui), CosmWasm — deteksi otomatis proyek dan alur kerja yang
-  sesuai (compile → test → fuzz → deploy).
-- Alur kerja *security-first*: integrasi Slither/Mythril/Echidna sebagai
-  langkah bawaan sebelum deploy, bukan opsi tambahan.
-- Pemahaman on-chain: baca state kontrak, decode transaksi & event log,
-  simulasi di fork jaringan sebelum eksekusi nyata.
+- Dukungan kelas satu untuk toolchain Solana: **Anchor, Pinocchio, dan Rust
+  native** — deteksi otomatis proyek dan alur kerja yang sesuai (compile →
+  test → lint → simulasi → deploy). Chain lain (EVM, Move, Cosmos, dst.)
+  sengaja tidak diprioritaskan (lihat §0).
+- Alur kerja *security-first*: lint keamanan SVM bawaan (missing
+  signer/owner check, arbitrary CPI, dsb. — sudah ada di
+  `altius-svm-tools`) sebagai langkah wajib sebelum deploy, bukan opsi
+  tambahan.
+- Pemahaman on-chain: baca state program, decode transaksi & instruksi
+  Solana per-protokol, simulasi RPC nyata sebelum eksekusi mainnet.
 
 *Kenapa ini moat:* kompetitor generalis besar tidak akan memprioritaskan
 vertikal ini (pasar mereka horizontal), dan pendatang kecil butuh bertahun
@@ -59,14 +83,15 @@ paling dipercaya, menang.
 insiden. Menjadi agent yang "belum pernah menghilangkan dana pengguna" adalah
 aset yang tidak bisa disalin dengan fork kode.
 
-### Langkah 3 — Moat Data & Evaluasi: benchmark dan korpus web3
+### Langkah 3 — Moat Data & Evaluasi: benchmark dan korpus Solana
 
-- Bangun korpus terkurasi: kontrak teraudit, pola kerentanan (SWC registry,
-  laporan audit publik), idiom per-protokol.
-- Rilis benchmark publik untuk tugas agent di smart contract (perbaiki
-  kerentanan, tulis test invariant, deploy multi-chain) — jadikan Altius
-  standar pengukurannya, seperti arc-agi-crystalline membuktikan diri lewat
-  benchmark ARC.
+- Bangun korpus terkurasi: program Solana teraudit, pola kerentanan (SWC
+  registry yang relevan, laporan audit publik ekosistem Solana), idiom per
+  protokol (Anchor, Pinocchio).
+- Rilis benchmark publik untuk tugas agent di program Solana (perbaiki
+  kerentanan, tulis test invariant, deploy ke devnet/mainnet) — jadikan
+  Altius standar pengukurannya, seperti arc-agi-crystalline membuktikan diri
+  lewat benchmark ARC.
 
 *Kenapa ini moat:* siapa yang memiliki benchmark memiliki definisi "bagus"
 di kategorinya; data terkurasi tidak ikut ter-fork bersama kode.
@@ -86,13 +111,13 @@ Adopsi pelajaran arc-agi-crystalline dan hermes-agent: memori yang menyimpan
 *Kenapa ini moat:* nilai produk naik seiring pemakaian (switching cost);
 agent pesaing mulai dari nol di setiap proyek.
 
-### Langkah 5 — Moat Ekosistem: skills & MCP marketplace khusus web3
+### Langkah 5 — Moat Ekosistem: skills & MCP marketplace khusus Solana
 
-- Skills per-protokol (Uniswap, Aave, dsb.) dan per-chain yang bisa dibuat
+- Skills per-protokol Solana (Jupiter, Marinade, dsb.) yang bisa dibuat
   komunitas — meniru mekanika plugin claude-code/grok-build tapi dengan
-  fokus vertikal.
-- MCP server siap pakai untuk RPC node, indexer (The Graph), block explorer,
-  price oracle.
+  fokus vertikal Solana, bukan lintas-chain.
+- MCP server siap pakai untuk RPC node Solana, indexer on-chain, Solana
+  Explorer, dan price oracle Solana (Pyth, dsb.).
 - Insentif kontributor lewat norma web3 (bounty, grant dari foundation
   chain) — jalur pendanaan komunitas yang tidak dimiliki kompetitor umum.
 
@@ -124,7 +149,7 @@ politik di komunitas open-source/web3.
 
 ## 4. Metrik Moat
 
-- **Kedalaman vertikal:** % tugas web3 di benchmark yang diselesaikan vs kompetitor generalis.
+- **Kedalaman vertikal:** % tugas Solana di benchmark yang diselesaikan vs kompetitor generalis (bukan rata-rata lintas chain — lihat §0).
 - **Kepercayaan:** jumlah transaksi mainnet dieksekusi tanpa insiden; jumlah temuan audit yang dicegah.
 - **Retensi:** switching cost terukur — berapa banyak konteks/memori/skill per pengguna aktif.
 - **Ekosistem:** jumlah skill pihak ketiga dan MCP server aktif per bulan.

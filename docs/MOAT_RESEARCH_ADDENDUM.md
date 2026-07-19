@@ -122,7 +122,7 @@ yang Altius adaptasi, scanner keamanan, simulasi transaksi, dan agent web3 verti
 | Produk | Kategori | Overlap vs Altius | Diferensiasi Altius |
 |---|---|---|---|
 | [Claude Code Remote Control](https://code.claude.com/docs/en/remote-control) | Remote coding agent (research preview) | Thin client → host session; permission gates tetap; MCP/skills lokal | Altius: self-hosted BeeACP/PWA + bearer token + SQLite RunStore; **bukan** subscription OAuth Anthropic; domain web3 |
-| [Cyfrin Aderyn](https://github.com/cyfrin/aderyn) | Static analyzer Solidity (Rust), SARIF/MD/JSON, CI Action | `altius scan --format sarif` di CI | Aderyn = detector EVM dalam; Altius = multi-chain fleet + agent route `/scan` + TxGuard path |
+| [Cyfrin Aderyn](https://github.com/cyfrin/aderyn) | Static analyzer Solidity (Rust), SARIF/MD/JSON, CI Action | `altius scan --format sarif` di CI | Aderyn = detector EVM dalam; Altius = fleet Solana-first + agent route `/scan` + TxGuard path (scanner chain lain di `altius-scanners` bersifat sekunder, lihat §0 strategi utama — bukan prioritas investasi) |
 | Trail of Bits Slither / Mythril | Static / symbolic EVM | Pattern scanners, CI gate | Altius mengorkestrasi native scanners + agent, bukan mengganti Slither |
 | [Tenderly Simulations](https://docs.tenderly.co/simulations/overview) | Dev-grade tx simulation API (100+ EVM nets) | Preview outcome sebelum broadcast | Altius TxGuard: sim → HITL → isolated signer; Solana-first + policy fail-closed |
 | Blowfish (wallet simulation / fraud) | End-user / wallet risk engine (Solana+EVM) | Human-readable pre-sign preview | Altius target **developer agent** workflow, bukan wallet extension |
@@ -149,7 +149,7 @@ Dari docs resmi Anthropic (research preview, diperbarui 2026):
 | P0 | Bearer wajib di non-localhost; dokumentasikan no-auth hanya offline demo | Claude memperlakukan remote URL sebagai credential; Altius harus setara |
 | P0 | Human-readable `DiffReport` (program ID dikenal) sebelum approve | Tenderly/Blowfish menang di preview readability (Langkah 2) |
 | P1 | SARIF CI fail-on High/Critical + artifact upload (sudah ada job `scan`) | Paritas Aderyn CI / VulnHunter SARIF |
-| P1 | Vertikal Solana detectors + optional shell-out ke Aderyn/Slither | Cross-chain static analysis masih gap pasar 2026 |
+| P1 | Perdalam detector Solana (lint SVM + shell-out opsional ke tool audit Solana) | Kedalaman vertikal Solana adalah moat; lihat §0 strategi utama — **cross-chain static analysis sengaja tidak dikejar** meski itu gap pasar 2026 |
 | P2 | `TxKind::Payment` / x402 lewat TxGuard | Differentiator vs Agent Kit/GOAT yang expose transfer mentah |
 | P2 | Plugin pack marketplace web3 (bukan general) | Langkah 5; v0 install-by-path cukup sampai retention ada |
 | Hindari | Race channel messaging / desktop IDE / frontier model lock-in | Sudah di §5 strategi utama; Claude/OpenClaw menang di sana |
